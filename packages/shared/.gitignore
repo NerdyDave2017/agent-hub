@@ -1,0 +1,11 @@
+# Shared Python package (see root .gitignore too)
+.venv/
+venv/
+*.egg-info/
+__pycache__/
+*.py[cod]
+dist/
+build/
+
+.env
+.env.*

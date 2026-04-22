@@ -1,0 +1,18 @@
+# Terraform in any service root: infra/backend/, infra/worker/, infra/agents/*/, etc.
+**/.terraform/
+**/.terraform.tfstate.lock.info
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Variable files often contain secrets — use *.tfvars.example in repo
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Do NOT ignore: .terraform.lock.hcl (commit for reproducible applies)
