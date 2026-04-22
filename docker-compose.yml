@@ -1,0 +1,40 @@
+# Local Development Docker Compose Configuration
+#
+# Services
+# ---------
+# * **postgres** — hub + worker share the same DB in local dev (`docs/plan.md`).
+# * **localstack** — SQS (+ hooks only enable SQS); init hooks are mounted from
+#   `scripts/localstack-init/` → `/etc/localstack/init/`. Hub/worker use boto3 with
+#   `AWS_ENDPOINT_URL=http://localhost:4566` from the host, or `http://localstack:4566`
+#   from other compose services.
+
+services:
+  postgres:
+    image: postgres:15
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  localstack:
+    image: localstack/localstack:3.8
+    ports:
+      - "4566:4566"
+    environment:
+      SERVICES: sqs
+      DEBUG: 0
+    volumes:
+      - ./scripts/localstack-init:/etc/localstack/init
+    healthcheck:
+      test: [ "CMD", "curl", "-sf", "http://localhost:4566/_localstack/health" ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+volumes:
+  postgres_data:

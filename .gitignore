@@ -1,0 +1,84 @@
+# --- Environment & secrets (never commit) ---
+.env
+.env.*
+!.env.example
+!.env*.example
+*.pem
+*.key
+!*.key.example
+
+# --- Python (hub, worker, agents, packages) ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+pip-wheel-metadata/
+
+# --- Test / type / lint caches ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.pytype/
+
+# --- Terraform (all roots under infra/) ---
+**/.terraform/
+**/.terraform.tfstate.lock.info
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+!terraform.tfvars.example
+
+# --- Node / frontend (when present) ---
+node_modules/
+.next/
+out/
+.nuxt/
+.turbo/
+.vercel/
+*.tsbuildinfo
+
+# --- IDE & OS ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- Logs & local scratch ---
+*.log
+logs/
+tmp/
+temp/
+.cache/
+
+# --- Optional local bind mounts (add names you use in compose) ---
+# postgres_data/
+
+# --- LocalStack / local AWS emulators ---
+.localstack/
