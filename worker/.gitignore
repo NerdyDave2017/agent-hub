@@ -1,0 +1,15 @@
+# Python worker service (see root .gitignore too)
+.venv/
+venv/
+*.egg-info/
+__pycache__/
+*.py[cod]
+
+.env
+.env.*
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/

@@ -1,0 +1,19 @@
+# Incident triage agent (Python / FastAPI or similar — see root .gitignore too)
+.venv/
+venv/
+*.egg-info/
+__pycache__/
+*.py[cod]
+
+.env
+.env.*
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# LangGraph / local checkpoints (if written to disk during dev)
+.checkpoints/
+*.sqlite3
