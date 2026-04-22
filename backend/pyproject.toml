@@ -1,0 +1,26 @@
+[project]
+name = "agent-hub-backend"
+version = "0.1.0"
+description = "Agent hub backend (incremental build)"
+requires-python = ">=3.11"
+dependencies = [
+  "boto3>=1.35.0",
+  "sqlalchemy[asyncio]>=2.0.36",
+  "asyncpg>=0.30.0",
+  "alembic>=1.14.0",
+  "pydantic>=2.10.0",
+  "pydantic-settings>=2.6.0",
+  "fastapi>=0.115.0",
+  "uvicorn[standard]>=0.32.0",
+]
+
+[build-system]
+requires = ["setuptools>=75.0.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["db*", "core*", "apis*", "schemas*", "services*", "domain*"]

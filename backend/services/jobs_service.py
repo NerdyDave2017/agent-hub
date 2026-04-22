@@ -1,0 +1,178 @@
+"""
+Job rows (Postgres mirror of async work) and optional **SQS publish** after commit.
+
+Callers may be HTTP routers or other services. Inputs are **plain values** (no Pydantic
+request models); wire JSON still uses `JobQueueEnvelope` from `schemas` (transport shape).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from dataclasses import dataclass
+from typing import Any, List
+from uuid import UUID
+
+from botocore.exceptions import BotoCoreError, ClientError
+from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from core.settings import get_settings
+from core.sqs import send_job_envelope
+from db.models import Job
+from domain.enums import JobStatus
+from domain.exceptions import JobNotFound
+from domain.job_payload import assert_safe_job_payload
+from schemas.sqs_job_envelope import JobQueueEnvelope
+from services import agents_service
+from services.tenants_service import require_tenant
+
+logger = logging.getLogger(__name__)
+
+# Numeric codes only — **not** `http.HTTPStatus`, so this module stays free of HTTP-named types.
+# Routers use these for `POST` semantics: **201** first create, **200** idempotent replay (RFC-style).
+_STATUS_FIRST_CREATE = 201
+_STATUS_IDEMPOTENT_REPLAY = 200
+
+
+@dataclass(frozen=True)
+class CreateJobResult:
+    """
+    Bundle returned by `create_job_with_publish` so callers get both:
+
+    * **`job`** — the SQLAlchemy `Job` row after commit (and optional SQS publish / status flip).
+    * **`status_code`** — **201** when a new row was inserted, **200** when an existing row was
+      returned for the same `(tenant_id, idempotency_key)` (client retry / double submit).
+
+    The API layer maps `status_code` onto `Response.status_code` for `POST .../jobs`; non-HTTP
+    callers (e.g. another service) can ignore it and only read `job`.
+    """
+
+    job: Job
+    status_code: int
+
+
+async def get_job_for_tenant(session: AsyncSession, tenant_id: UUID, job_id: UUID) -> Job:
+    """Return the job row scoped to tenant, or raise `JobNotFound`."""
+    await require_tenant(session, tenant_id)
+    job = await session.get(Job, job_id)
+    if job is None or job.tenant_id != tenant_id:
+        raise JobNotFound
+    return job
+
+
+async def get_all_tenant_jobs(session: AsyncSession, tenant_id: UUID) -> List[Job]:
+    """Return all jobs for a tenant."""
+    return await session.scalars(select(Job).where(Job.tenant_id == tenant_id))
+    
+async def create_job_with_publish(
+    session: AsyncSession,
+    *,
+    tenant_id: UUID,
+    job_type: str,
+    correlation_id: str,
+    agent_id: UUID | None = None,
+    idempotency_key: str | None = None,
+    payload: dict[str, Any] | None = None,
+) -> CreateJobResult:
+    """
+    Insert (or replay) a job, optionally publish to SQS, return the ORM row + status code.
+
+    * **200** — idempotent replay: existing row for `(tenant_id, idempotency_key)`.
+    * **201** — new row inserted.
+
+    Transaction note: commits after initial insert; may **commit** again when moving to `queued`.
+    """
+    assert_safe_job_payload(payload)
+
+    await require_tenant(session, tenant_id)
+
+    if agent_id is not None:
+        await agents_service.assert_agent_belongs_to_tenant(
+            session, tenant_id=tenant_id, agent_id=agent_id
+        )
+
+    if idempotency_key:
+        existing = await session.scalar(
+            select(Job).where(
+                Job.tenant_id == tenant_id,
+                Job.idempotency_key == idempotency_key,
+            )
+        )
+        if existing is not None:
+            return CreateJobResult(job=existing, status_code=_STATUS_IDEMPOTENT_REPLAY)
+
+    job = Job(
+        tenant_id=tenant_id,
+        agent_id=agent_id,
+        job_type=job_type,
+        status=JobStatus.pending,
+        correlation_id=correlation_id,
+        idempotency_key=idempotency_key,
+        payload=payload,
+    )
+    session.add(job)
+
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        if idempotency_key:
+            replay = await session.scalar(
+                select(Job).where(
+                    Job.tenant_id == tenant_id,
+                    Job.idempotency_key == idempotency_key,
+                )
+            )
+            if replay is not None:
+                return CreateJobResult(job=replay, status_code=_STATUS_IDEMPOTENT_REPLAY)
+        raise
+
+    await session.refresh(job)
+    out_status = _STATUS_FIRST_CREATE
+
+    settings = get_settings()
+    if settings.sqs_queue_url:
+        envelope = JobQueueEnvelope.from_committed_job(
+            job_id=job.id,
+            tenant_id=tenant_id,
+            job_type=job.job_type,
+            correlation_id=job.correlation_id,
+            agent_id=job.agent_id,
+            payload=job.payload,
+        )
+        body_json = json.dumps(envelope.model_dump(mode="json"))
+        try:
+            message_id = await asyncio.to_thread(
+                send_job_envelope,
+                settings=settings,
+                body_json=body_json,
+            )
+            logger.info(
+                "job enqueued to sqs",
+                extra={
+                    "service": "hub",
+                    "job_id": str(job.id),
+                    "tenant_id": str(tenant_id),
+                    "correlation_id": job.correlation_id,
+                    "sqs_message_id": message_id,
+                },
+            )
+            job.status = JobStatus.queued
+            await session.commit()
+            await session.refresh(job)
+        except (BotoCoreError, ClientError, OSError, RuntimeError) as exc:
+            logger.warning(
+                "sqs send failed job left pending",
+                extra={
+                    "service": "hub",
+                    "job_id": str(job.id),
+                    "tenant_id": str(tenant_id),
+                    "correlation_id": job.correlation_id,
+                    "error": str(exc),
+                },
+            )
+
+    return CreateJobResult(job=job, status_code=out_status)

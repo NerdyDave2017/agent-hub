@@ -1,0 +1,17 @@
+# Local venv and install artifacts (see root .gitignore too)
+.venv/
+venv/
+*.egg-info/
+__pycache__/
+*.py[cod]
+
+# Env and secrets
+.env
+.env.*
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
