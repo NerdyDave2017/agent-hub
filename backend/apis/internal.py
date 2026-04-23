@@ -49,20 +49,17 @@ async def get_internal_tenant(
     }
 
 
-def _incident_row(r: Incident) -> dict:
+def _safe_incident_for_internal_list(r: Incident) -> dict:
+    """Fields safe for agent LLM context — no PII (see ``deployment-and-dashboard-instructions``)."""
     return {
         "id": str(r.id),
-        "message_id": r.message_id,
-        "tenant_id": str(r.tenant_id),
-        "agent_id": str(r.agent_id) if r.agent_id else None,
         "incident_type": r.incident_type,
         "severity": r.severity,
         "summary": r.summary,
         "confidence": r.confidence,
         "created_at": r.created_at.isoformat() if r.created_at else None,
         "slack_sent": r.slack_sent,
-        "raw_subject": r.raw_subject,
-        "raw_sender": r.raw_sender,
+        "actions_taken": r.actions_taken,
     }
 
 
@@ -82,4 +79,4 @@ async def list_recent_incidents(
             .limit(lim)
         )
     ).all()
-    return [_incident_row(r) for r in rows]
+    return [_safe_incident_for_internal_list(r) for r in rows]
