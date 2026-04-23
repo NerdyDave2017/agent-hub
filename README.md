@@ -57,24 +57,28 @@ The canonical Pydantic model (serialize with `model_dump(mode="json")`) is [`pac
 
 **Standard SQS queue (`agent-hub-jobs`)** — This is the **primary pipe** between hub and worker. The hub calls `SendMessage` here after it commits a job row. Your worker long-polls this queue with `ReceiveMessage`, processes the payload (often by loading `job_id` from Postgres), then calls `DeleteMessage` on success. **The worker is subscribed only to this queue URL** (`SQS_QUEUE_URL`).
 
-**Dead-letter queue (`agent-hub-jobs-dlq`)** — This is **not** where the hub sends work directly. AWS (or LocalStack) **moves** messages here automatically when a message has been **received and not deleted** more than `maxReceiveCount` times (we set `5` in the init script). Typical reasons: your handler keeps throwing, the worker crashes before `DeleteMessage`, or the message is malformed and you `ChangeMessageVisibility` / let it time out until the cap is hit.
+**Dead-letter queue (`agent-hub-jobs-dlq`)** — This is **not** where the hub sends work directly. AWS (or LocalStack) **moves** messages here automatically when a message has been **received and not deleted** more than `maxReceiveCount` times (Terraform sets `5` on the main queue’s redrive policy). Typical reasons: your handler keeps throwing, the worker crashes before `DeleteMessage`, or the message is malformed and you `ChangeMessageVisibility` / let it time out until the cap is hit.
 
 So: **hub → main queue → worker** is the happy path. **Main queue → DLQ** is AWS’s safety net for “this message is poison or the code is broken,” so one bad job does not block the queue forever. In ops you inspect the DLQ (replay, fix data, discard); the normal worker process still only **polls the main queue** unless you deliberately add a second consumer for DLQ inspection.
 
-Compose runs **LocalStack** with **SQS only** and a **ready hook** that creates:
+**Terraform + Makefile (source of truth)** — Queues, IAM task-role shapes, and a few Secrets Manager placeholders are defined in [`infra/localstack/`](infra/localstack/). From the repo root:
+
+```bash
+make local-up          # postgres + localstack
+make local-provision   # wait for LocalStack → terraform apply → writes localstack.auto.env
+```
+
+`localstack.auto.env` holds `SQS_QUEUE_URL` / `SQS_DLQ_URL` from Terraform (LocalStack may use a different host/path than the legacy defaults). Use it with Compose:
+
+```bash
+docker compose --env-file localstack.auto.env up -d hub worker
+# or: make local-apps-up
+```
 
 | Queue | Purpose |
 | --- | --- |
 | `agent-hub-jobs` | Main work queue — hub `SendMessage`, worker `ReceiveMessage`. |
 | `agent-hub-jobs-dlq` | Dead-letter queue — `RedrivePolicy` on the main queue (`maxReceiveCount: 5`). |
-
-**Start LocalStack**
-
-```bash
-docker compose up -d localstack
-```
-
-Wait until `docker compose ps` shows `localstack` healthy (first pull can take a few minutes).
 
 **Confirm queues**
 
@@ -82,17 +86,10 @@ Wait until `docker compose ps` shows `localstack` healthy (first pull can take a
 docker compose exec localstack awslocal sqs list-queues
 ```
 
-**Queue URLs (typical LocalStack path-style)**
-
-With default account `000000000000` and region `us-east-1`, URLs usually look like:
-
-- Main: `http://localhost:4566/000000000000/agent-hub-jobs`
-- DLQ: `http://localhost:4566/000000000000/agent-hub-jobs-dlq`
-
-If your LocalStack build returns a different host (e.g. `sqs.us-east-1.localhost.localstack.cloud:4566`), use the URL from:
+**Queue URLs** — Prefer values from `localstack.auto.env` or:
 
 ```bash
-docker compose exec localstack awslocal sqs get-queue-url --queue-name agent-hub-jobs --output text
+cd infra/localstack && terraform output -raw sqs_queue_url
 ```
 
 **Environment variables (hub / worker, local)**
@@ -109,29 +106,22 @@ These names match [`packages/agent-hub-core/src/agent_hub_core/config/settings.p
 
 **Hub enqueue:** when `SQS_QUEUE_URL` is set, `POST /api/v1/tenants/{tenant_id}/jobs` commits the `jobs` row, then calls `SendMessage` with a **`JobQueueEnvelope`** ([`messaging/envelope.py`](packages/agent-hub-core/src/agent_hub_core/messaging/envelope.py)). On success the row becomes **`queued`**; if SQS is misconfigured the row stays **`pending`** and the hub logs a warning with `job_id` / `correlation_id`. If `SQS_QUEUE_URL` is **unset**, rows stay **`pending`** (useful while you only exercise the REST + DB layer).
 
-**Init script**
-
-Hooks live under [`scripts/localstack-init/ready.d/`](scripts/localstack-init/ready.d/) and mount into the container as `/etc/localstack/init/ready.d/`. The shell script must stay **executable** (`chmod +x scripts/localstack-init/ready.d/01-init-sqs.sh`) so LocalStack can run it on boot.
+**Init hooks** — [`scripts/localstack-init/ready.d/`](scripts/localstack-init/ready.d/) still mounts into the container; queue creation is **not** done there anymore (Terraform owns SQS). Keep scripts **executable** if you add new `ready.d` steps (`chmod +x scripts/localstack-init/ready.d/*.sh`).
 
 ## Smoke test: Postgres + hub + LocalStack SQS
 
 Goal: prove **migrations**, **hub → DB**, and **hub → SQS** in one pass (no worker required for the queue part).
 
-**1. Start Postgres + LocalStack**
+**1. Start Postgres + LocalStack and provision AWS emulators**
 
 ```bash
-docker compose up -d postgres localstack
-```
-
-Wait until both are healthy. Grab the main queue URL:
-
-```bash
-docker compose exec localstack awslocal sqs get-queue-url --queue-name agent-hub-jobs --output text
+make local-up
+make local-provision
 ```
 
 **2. Configure the hub (`backend/.env` or your shell)**
 
-Use a DB URL that matches compose (from your laptop, not from inside a container):
+Use a DB URL that matches compose (from your laptop, not from inside a container). Queue URLs: copy from `make local-print-env` or `cat localstack.auto.env`.
 
 ```bash
 export DATABASE_URL='postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/postgres'
@@ -139,7 +129,7 @@ export AWS_REGION=us-east-1
 export AWS_ENDPOINT_URL=http://127.0.0.1:4566
 export AWS_ACCESS_KEY_ID=test
 export AWS_SECRET_ACCESS_KEY=test
-export SQS_QUEUE_URL='<paste queue URL from step 1>'
+export SQS_QUEUE_URL='<from localstack.auto.env or terraform output -raw sqs_queue_url>'
 ```
 
 **3. Run migrations**

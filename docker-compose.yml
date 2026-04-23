@@ -3,10 +3,9 @@
 # Services
 # ---------
 # * **postgres** — hub + worker share the same DB in local dev (`docs/plan.md`).
-# * **localstack** — SQS (+ hooks only enable SQS); init hooks are mounted from
-#   `scripts/localstack-init/` → `/etc/localstack/init/`. Hub/worker use boto3 with
-#   `AWS_ENDPOINT_URL=http://localhost:4566` from the host, or `http://localstack:4566`
-#   from other compose services.
+# * **localstack** — SQS + IAM + STS + Secrets Manager for Terraform + app parity; init
+#   hooks under `scripts/localstack-init/ready.d/` (queue creation is Terraform — see
+#   Makefile `local-provision`). Hub/worker use `AWS_ENDPOINT_URL` (host vs compose below).
 # * **hub** — FastAPI control plane (`backend/Dockerfile`); runs Alembic then `uvicorn`.
 # * **worker** — SQS consumer (`worker/Dockerfile`); does **not** run migrations.
 
@@ -33,7 +32,8 @@ services:
     ports:
       - "4566:4566"
     environment:
-      SERVICES: sqs
+      # Minimum for Terraform (`infra/localstack`) + boto3 in hub/worker. Add ecs,ecr,elbv2 if you exercise those adapters against LocalStack.
+      SERVICES: sqs,iam,sts,secretsmanager
       DEBUG: 0
     volumes:
       - ./scripts/localstack-init:/etc/localstack/init
@@ -56,7 +56,9 @@ services:
       AWS_ENDPOINT_URL: http://localstack:4566
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
-      SQS_QUEUE_URL: http://localstack:4566/000000000000/agent-hub-jobs
+      # After `make local-provision`, use: docker compose --env-file localstack.auto.env up hub
+      SQS_QUEUE_URL: ${SQS_QUEUE_URL:-http://localstack:4566/000000000000/agent-hub-jobs}
+      SQS_DLQ_URL: ${SQS_DLQ_URL:-http://localstack:4566/000000000000/agent-hub-jobs-dlq}
     depends_on:
       postgres:
         condition: service_healthy
@@ -73,7 +75,8 @@ services:
       AWS_ENDPOINT_URL: http://localstack:4566
       AWS_ACCESS_KEY_ID: test
       AWS_SECRET_ACCESS_KEY: test
-      SQS_QUEUE_URL: http://localstack:4566/000000000000/agent-hub-jobs
+      SQS_QUEUE_URL: ${SQS_QUEUE_URL:-http://localstack:4566/000000000000/agent-hub-jobs}
+      SQS_DLQ_URL: ${SQS_DLQ_URL:-http://localstack:4566/000000000000/agent-hub-jobs-dlq}
     depends_on:
       postgres:
         condition: service_healthy

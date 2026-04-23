@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars (gitignored) or pass -var flags from the Makefile.
+
+aws_region          = "us-east-1"
+localstack_endpoint = "http://127.0.0.1:4566"
+
+# jobs_queue_name   = "agent-hub-jobs"
+# jobs_dlq_name     = "agent-hub-jobs-dlq"
+
+# internal_service_token = "your-dev-token"
