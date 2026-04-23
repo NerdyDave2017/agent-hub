@@ -109,6 +109,11 @@ class Settings(BaseSettings):
         validation_alias="GMAIL_RENEWAL_SCHEDULER_SECONDS",
         description="Worker background loop: enqueue gmail_watch_renewal for expiring integrations; 0 disables.",
     )
+    langfuse_host: str = Field(
+        default="https://cloud.langfuse.com",
+        validation_alias="LANGFUSE_HOST",
+        description="Public Langfuse UI base URL for dashboard trace links (no secrets).",
+    )
 
     @computed_field  # type: ignore[prop-decorator]
     @property
