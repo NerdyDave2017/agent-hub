@@ -14,6 +14,8 @@ __pycache__/
 .coverage
 htmlcov/
 
+*.egg-info/
+
 # LangGraph / local checkpoints (if written to disk during dev)
 .checkpoints/
 *.sqlite3
