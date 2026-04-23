@@ -1,0 +1,51 @@
+# Phase 9 — worker + shared kernel (see `response.md`).
+name: Worker
+
+on:
+  push:
+    paths:
+      - "worker/**"
+      - "packages/agent-hub-core/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/worker.yml"
+  pull_request:
+    paths:
+      - "worker/**"
+      - "packages/agent-hub-core/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/worker.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync workspace (with dev tools)
+        run: uv sync --frozen --group dev
+
+      - name: Import shared kernel
+        run: uv run --package agent-hub-core python -c "import
+          agent_hub_core.messaging.envelope; import agent_hub_core.db.engine"
+
+      - name: Import worker
+        run: uv run --package agent-hub-worker python -c "import worker.main; import
+          worker.handlers.registry"
+
+      - name: Byte-compile worker sources
+        run: uv run --package agent-hub-worker python -m compileall -q worker
+
+      - name: Run tests
+        run: uv run --group dev pytest -q
