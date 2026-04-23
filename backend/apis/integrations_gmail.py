@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import base64
 import json
 from datetime import datetime, timezone
@@ -16,9 +15,7 @@ from googleapiclient.discovery import build
 from sqlalchemy import select
 
 from agent_hub_core.config.settings import get_settings
-from agent_hub_core.db.engine import get_session_factory
-from agent_hub_core.db.models import Deployment, Integration
-from agent_hub_core.domain.enums import DeploymentStatus
+from agent_hub_core.db.models import Integration
 from agent_hub_core.observability.logging import get_logger
 
 from apis.dependencies import DbSession
@@ -28,53 +25,8 @@ log = get_logger(__name__)
 
 router = APIRouter()
 
-
-async def _notify_agent_gmail_watch_active(*, tenant_id: UUID, agent_id: UUID) -> None:
-    """Tell incident-triage to suppress polling now that hub Gmail push is active."""
-    s = get_settings()
-    token = (s.internal_service_token or "").strip()
-    if not token:
-        log.debug("gmail_oauth_skip_agent_notify_no_internal_token")
-        return
-    base_url: str | None = None
-    fallback = (s.incident_triage_agent_url or "").strip().rstrip("/")
-    factory = get_session_factory(s)
-    async with factory() as db:
-        row = await db.scalar(
-            select(Deployment)
-            .where(
-                Deployment.agent_id == agent_id,
-                Deployment.status == DeploymentStatus.live,
-            )
-            .order_by(Deployment.created_at.desc())
-            .limit(1)
-        )
-        if row and row.base_url:
-            base_url = str(row.base_url).rstrip("/")
-    if not base_url and fallback:
-        base_url = fallback
-    if not base_url:
-        log.info(
-            "gmail_oauth_skip_agent_notify_no_url",
-            tenant_id=str(tenant_id),
-            agent_id=str(agent_id),
-        )
-        return
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                f"{base_url}/internal/gmail-watch-active",
-                json={"tenant_id": str(tenant_id), "agent_id": str(agent_id)},
-                headers={"Authorization": f"Bearer {token}"},
-            )
-        if resp.status_code >= 400:
-            log.warning(
-                "gmail_oauth_agent_notify_http",
-                status_code=resp.status_code,
-                body=resp.text[:300],
-            )
-    except Exception:
-        log.exception("gmail_oauth_agent_notify_failed")
+# Hub never calls the agent over HTTP. After OAuth, `integrations.watch_active=True`
+# (set below) lets the agent poll loop skip Gmail polling when hub Pub/Sub is active.
 
 GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -273,8 +225,6 @@ async def gmail_oauth_callback(
             )
         )
     await session.commit()
-
-    asyncio.create_task(_notify_agent_gmail_watch_active(tenant_id=tenant_id, agent_id=agent_id))
 
     dest = f"{settings.hub_public_url.rstrip('/')}/?gmail=connected=1"
     return RedirectResponse(dest, status_code=302)

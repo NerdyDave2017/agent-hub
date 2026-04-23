@@ -78,7 +78,6 @@ async def lifespan(app: FastAPI):
 
     app.state.session_factory = None
     app.state.checkpoint_pool = None
-    app.state.gmail_push_active = False
     if settings.database_url.strip():
         configure_database(settings.database_url)
         await init_agent_schema()
@@ -122,8 +121,8 @@ async def lifespan(app: FastAPI):
                 if interval <= 0:
                     return
                 await asyncio.sleep(interval)
-                if getattr(app.state, "gmail_push_active", False):
-                    log.debug("gmail_poll_skipped_push_active")
+                if await poller_mod.is_gmail_hub_push_watch_active(app):
+                    log.debug("gmail_poll_skipped_hub_watch_active")
                 else:
                     await poller_mod.poll_unread_and_schedule(app)
 
@@ -183,7 +182,10 @@ def create_app() -> FastAPI:
         tags=["agent"],
     )
     async def agent_meta(request: Request) -> AgentPublicMeta:
+        from incident_triage.triggers import poller as poller_mod
+
         s = get_settings()
+        push = await poller_mod.is_gmail_hub_push_watch_active(request.app)
         return AgentPublicMeta(
             app_name=s.app_name,
             api_v1_prefix=s.api_v1_prefix,
@@ -199,35 +201,8 @@ def create_app() -> FastAPI:
             database_configured=app.state.session_factory is not None,
             gmail_configured=gmail_integration.has_usable_credentials(s.gmail_credentials),
             gmail_poll_interval_seconds=s.gmail_poll_interval_seconds,
-            gmail_push_active=getattr(request.app.state, "gmail_push_active", False),
+            gmail_push_active=push,
         )
-
-    class GmailWatchActiveBody(BaseModel):
-        """Hub notifies the agent after Gmail ``users.watch`` succeeds (optional identity echo)."""
-
-        tenant_id: str = ""
-        agent_id: str = ""
-
-    @app.post("/internal/gmail-watch-active", tags=["system"])
-    async def gmail_watch_active(request: Request, body: GmailWatchActiveBody) -> dict[str, str | bool]:
-        """Suppress Gmail polling when hub push is active (Bearer ``HUB_SERVICE_TOKEN``)."""
-        log = get_logger(__name__)
-        s = get_settings()
-        expected = (s.hub_service_token or "").strip()
-        auth = (request.headers.get("authorization") or "").strip()
-        if not expected or auth != f"Bearer {expected}":
-            raise HTTPException(status_code=401, detail="unauthorized")
-        if s.tenant_id.strip() and body.tenant_id.strip() and body.tenant_id != s.tenant_id:
-            raise HTTPException(status_code=403, detail="tenant mismatch")
-        if s.agent_id.strip() and body.agent_id.strip() and body.agent_id != s.agent_id:
-            raise HTTPException(status_code=403, detail="agent mismatch")
-        request.app.state.gmail_push_active = True
-        log.info(
-            "gmail_push_active",
-            tenant_id=body.tenant_id or None,
-            agent_id=body.agent_id or None,
-        )
-        return {"status": "ok", "gmail_push_active": True}
 
     @app.post(f"{settings.api_v1_prefix}/runs", tags=["agent"])
     async def trigger_run(payload: RunRequest, request: Request) -> dict[str, str]:
