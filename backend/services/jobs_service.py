@@ -2,14 +2,13 @@
 Job rows (Postgres mirror of async work) and optional **SQS publish** after commit.
 
 Callers may be HTTP routers or other services. Inputs are **plain values** (no Pydantic
-request models); wire JSON still uses `JobQueueEnvelope` from `schemas` (transport shape).
+request models); wire JSON still uses ``JobQueueEnvelope`` from ``agent_hub_core.messaging`` (transport shape).
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import logging
 from dataclasses import dataclass
 from typing import Any, List
 from uuid import UUID
@@ -19,17 +18,18 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.settings import get_settings
-from core.sqs import send_job_envelope
-from db.models import Job
-from domain.enums import JobStatus
-from domain.exceptions import JobNotFound
-from domain.job_payload import assert_safe_job_payload
-from schemas.sqs_job_envelope import JobQueueEnvelope
+from agent_hub_core.config.settings import get_settings
+from agent_hub_core.db.models import Job
+from agent_hub_core.domain.enums import JobStatus
+from agent_hub_core.domain.exceptions import JobNotFound
+from agent_hub_core.domain.job_payload import assert_safe_job_payload
+from agent_hub_core.messaging.envelope import JobQueueEnvelope
+from agent_hub_core.messaging.sqs import send_job_envelope
+from agent_hub_core.observability.logging import get_logger
 from services import agents_service
 from services.tenants_service import require_tenant
 
-logger = logging.getLogger(__name__)
+log = get_logger(__name__)
 
 # Numeric codes only — **not** `http.HTTPStatus`, so this module stays free of HTTP-named types.
 # Routers use these for `POST` semantics: **201** first create, **200** idempotent replay (RFC-style).
@@ -59,7 +59,7 @@ async def get_job_for_tenant(session: AsyncSession, tenant_id: UUID, job_id: UUI
     await require_tenant(session, tenant_id)
     job = await session.get(Job, job_id)
     if job is None or job.tenant_id != tenant_id:
-        raise JobNotFound
+        raise JobNotFound(job_id, tenant_id)
     return job
 
 
@@ -150,29 +150,25 @@ async def create_job_with_publish(
                 settings=settings,
                 body_json=body_json,
             )
-            logger.info(
-                "job enqueued to sqs",
-                extra={
-                    "service": "hub",
-                    "job_id": str(job.id),
-                    "tenant_id": str(tenant_id),
-                    "correlation_id": job.correlation_id,
-                    "sqs_message_id": message_id,
-                },
+            log.info(
+                "job_enqueued_to_sqs",
+                service="hub",
+                job_id=str(job.id),
+                tenant_id=str(tenant_id),
+                correlation_id=job.correlation_id,
+                sqs_message_id=message_id,
             )
             job.status = JobStatus.queued
             await session.commit()
             await session.refresh(job)
         except (BotoCoreError, ClientError, OSError, RuntimeError) as exc:
-            logger.warning(
-                "sqs send failed job left pending",
-                extra={
-                    "service": "hub",
-                    "job_id": str(job.id),
-                    "tenant_id": str(tenant_id),
-                    "correlation_id": job.correlation_id,
-                    "error": str(exc),
-                },
+            log.warning(
+                "sqs_send_failed_job_left_pending",
+                service="hub",
+                job_id=str(job.id),
+                tenant_id=str(tenant_id),
+                correlation_id=job.correlation_id,
+                error=str(exc),
             )
 
     return CreateJobResult(job=job, status_code=out_status)

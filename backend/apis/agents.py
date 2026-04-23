@@ -19,10 +19,10 @@ from fastapi import APIRouter, Query, Request, status
 from fastapi.responses import StreamingResponse
 
 from apis.dependencies import DbSession
-from core.database import get_session_factory
-from domain.enums import JobType
-from schemas.agent import AgentCreate, AgentProvisioningStatusRead, AgentRead, AgentUpdate
-from schemas.common import PaginatedMeta, PaginatedResponse
+from agent_hub_core.db.engine import get_session_factory
+from agent_hub_core.domain.enums import JobType
+from agent_hub_core.schemas.agent import AgentCreate, AgentProvisioningStatusRead, AgentRead, AgentUpdate
+from agent_hub_core.schemas.common import PaginatedMeta, PaginatedResponse
 from services import agents_service, jobs_service
 
 router = APIRouter()

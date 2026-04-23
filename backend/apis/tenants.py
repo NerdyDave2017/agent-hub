@@ -3,8 +3,8 @@ from uuid import UUID
 from fastapi import APIRouter, Query, status
 
 from apis.dependencies import DbSession
-from schemas.common import PaginatedMeta, PaginatedResponse
-from schemas.tenant import TenantCreate, TenantRead, TenantUpdate
+from agent_hub_core.schemas.common import PaginatedMeta, PaginatedResponse
+from agent_hub_core.schemas.tenant import TenantCreate, TenantRead, TenantUpdate
 from services import tenants_service
 
 router = APIRouter()

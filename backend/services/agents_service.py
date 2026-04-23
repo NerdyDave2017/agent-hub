@@ -4,8 +4,8 @@ Agent persistence scoped to a tenant.
 Routers pass `tenant_id` on every call; this module enforces tenant existence via
 `tenants_service.require_tenant`.
 
-Raises **`domain.exceptions`** — no HTTP/FastAPI types here. No Pydantic request models —
-pass plain values (and `domain.enums` types) from routers after validation.
+Raises **`agent_hub_core.domain.exceptions`** — no HTTP/FastAPI types here. No Pydantic request models —
+pass plain values (and ``agent_hub_core.domain.enums`` types) from routers after validation.
 """
 
 from __future__ import annotations
@@ -15,10 +15,10 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import Agent, Job
-from domain.enums import AgentStatus, AgentType, JobType
-from domain.exceptions import AgentNotFound
-from schemas.agent import AgentProvisioningJobSummary, AgentProvisioningStatusRead
+from agent_hub_core.db.models import Agent, Job
+from agent_hub_core.domain.enums import AgentStatus, AgentType, JobType
+from agent_hub_core.domain.exceptions import AgentNotFound
+from agent_hub_core.schemas.agent import AgentProvisioningJobSummary, AgentProvisioningStatusRead
 from services.tenants_service import require_tenant
 
 
@@ -26,7 +26,7 @@ async def require_agent(session: AsyncSession, tenant_id: UUID, agent_id: UUID) 
     """Return the agent row if it belongs to `tenant_id`, else raise `AgentNotFound`."""
     agent = await session.get(Agent, agent_id)
     if agent is None or agent.tenant_id != tenant_id:
-        raise AgentNotFound
+        raise AgentNotFound(agent_id, tenant_id)
     return agent
 
 

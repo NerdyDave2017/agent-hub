@@ -2,9 +2,9 @@
 Domain **services** — all database access used by HTTP routers (and callable internally).
 
 Routers in `apis/` should stay thin: parse/validate HTTP, call these modules, map ORM rows
-to Pydantic response models. Services raise **`domain.exceptions`**; `main.py` maps those to
-HTTP responses. Later, **access guards** (e.g. who may call job mutations) can wrap or live
-alongside these functions.
+to Pydantic response models. Services raise **`agent_hub_core.domain.exceptions`**; `main.py`
+maps those to HTTP responses. Later, **access guards** (e.g. who may call job mutations) can
+wrap or live alongside these functions.
 
 Layout
 ------

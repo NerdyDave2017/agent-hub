@@ -20,7 +20,7 @@ from uuid import UUID
 from fastapi import APIRouter, Request, Response, status
 
 from apis.dependencies import DbSession
-from schemas.job import JobCreate, JobRead
+from agent_hub_core.schemas.job import JobCreate, JobRead
 from services import jobs_service
 
 router = APIRouter()

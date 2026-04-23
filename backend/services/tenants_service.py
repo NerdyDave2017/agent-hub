@@ -4,7 +4,7 @@ Tenant persistence and lookups.
 All functions take an **async** SQLAlchemy `Session` from the request scope; callers own
 `commit`/`rollback` boundaries except where noted (e.g. `create_tenant` commits on success).
 
-Raises **`domain.exceptions`** — no HTTP/FastAPI types here. No Pydantic request models —
+Raises **`agent_hub_core.domain.exceptions`** — no HTTP/FastAPI types here. No Pydantic request models —
 pass plain values from routers after validation.
 """
 
@@ -16,15 +16,15 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import Tenant
-from domain.exceptions import TenantNotFound, TenantSlugConflict
+from agent_hub_core.db.models import Tenant
+from agent_hub_core.domain.exceptions import TenantNotFound, TenantSlugConflict
 
 
 async def require_tenant(session: AsyncSession, tenant_id: UUID) -> Tenant:
     """Return the tenant row or raise `TenantNotFound`."""
     tenant = await session.get(Tenant, tenant_id)
     if tenant is None:
-        raise TenantNotFound
+        raise TenantNotFound(tenant_id)
     return tenant
 
 
@@ -53,7 +53,7 @@ async def create_tenant(session: AsyncSession, *, name: str, slug: str) -> Tenan
         await session.commit()
     except IntegrityError:
         await session.rollback()
-        raise TenantSlugConflict from None
+        raise TenantSlugConflict(slug) from None
     await session.refresh(tenant)
     return tenant
 

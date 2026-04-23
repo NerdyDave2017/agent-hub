@@ -1,26 +1,29 @@
 """
 FastAPI application entrypoint.
 
-This layer sits *above* `core/database.py`: it owns HTTP concerns and process lifespan,
-while sessions and transactions stay explicit in route handlers. Pydantic contracts for
-HTTP bodies and responses live under `schemas/`.
+This layer sits *above* ``agent_hub_core.db.engine``: it owns HTTP concerns and process lifespan,
+while sessions and transactions stay explicit in route handlers. Pydantic contracts live in
+``agent_hub_core.schemas``.
 """
 
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_hub_core.config.settings import get_settings
+from agent_hub_core.db.engine import dispose_engine, get_db
+from agent_hub_core.domain.exceptions import AgentNotFound, DomainError, JobNotFound, TenantNotFound, TenantSlugConflict
+from agent_hub_core.observability.logging import configure_logging
+from agent_hub_core.schemas.common import HealthResponse, ReadyResponse
+
+from apis import internal, webhooks_gmail
 from apis.router import api_router
-from core.database import dispose_engine, get_db
-from core.settings import get_settings
-from domain.exceptions import AgentNotFound, JobNotFound, TenantNotFound, TenantSlugConflict
-from schemas.common import HealthResponse, ReadyResponse
 
 
 @asynccontextmanager
@@ -30,7 +33,16 @@ async def lifespan(_app: FastAPI):
     await dispose_engine()
 
 
+def _domain_error_payload(exc: DomainError) -> dict[str, Any]:
+    return {
+        "code": exc.error_code,
+        "message": exc.message,
+        **exc.context,
+    }
+
+
 def create_app() -> FastAPI:
+    configure_logging("hub", attach_to_root=True)
     settings = get_settings()
     app = FastAPI(
         title=settings.app_name,
@@ -59,26 +71,37 @@ def create_app() -> FastAPI:
             ) from exc
         return ReadyResponse(status="ok", database=True)
 
-    @app.exception_handler(TenantNotFound)
-    async def _tenant_not_found(_request: Request, _exc: TenantNotFound) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": "tenant not found"})
+    # @app.exception_handler(TenantNotFound)
+    # async def _tenant_not_found(_request: Request, exc: TenantNotFound) -> JSONResponse:
+    #     return JSONResponse(
+    #         status_code=exc.status_code,
+    #         content={"detail": _domain_error_payload(exc)},
+    #     )
 
-    @app.exception_handler(AgentNotFound)
-    async def _agent_not_found(_request: Request, _exc: AgentNotFound) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": "agent not found"})
+    # @app.exception_handler(AgentNotFound)
+    # async def _agent_not_found(_request: Request, exc: AgentNotFound) -> JSONResponse:
+    #     return JSONResponse(
+    #         status_code=exc.status_code,
+    #         content={"detail": _domain_error_payload(exc)},
+    #     )
 
-    @app.exception_handler(JobNotFound)
-    async def _job_not_found(_request: Request, _exc: JobNotFound) -> JSONResponse:
-        return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"detail": "job not found"})
+    # @app.exception_handler(JobNotFound)
+    # async def _job_not_found(_request: Request, exc: JobNotFound) -> JSONResponse:
+    #     return JSONResponse(
+    #         status_code=exc.status_code,
+    #         content={"detail": _domain_error_payload(exc)},
+    #     )
 
-    @app.exception_handler(TenantSlugConflict)
-    async def _tenant_slug_conflict(_request: Request, _exc: TenantSlugConflict) -> JSONResponse:
-        return JSONResponse(
-            status_code=status.HTTP_409_CONFLICT,
-            content={"detail": {"code": "tenant_conflict", "message": "slug already exists"}},
-        )
+    # @app.exception_handler(TenantSlugConflict)
+    # async def _tenant_slug_conflict(_request: Request, exc: TenantSlugConflict) -> JSONResponse:
+    #     return JSONResponse(
+    #         status_code=exc.status_code,
+    #         content={"detail": _domain_error_payload(exc)},
+    #     )
 
     app.include_router(api_router, prefix=settings.api_v1_prefix)
+    app.include_router(internal.router, prefix="/internal", tags=["internal"])
+    app.include_router(webhooks_gmail.router, prefix="/webhooks/gmail", tags=["webhooks"])
     return app
 
 
