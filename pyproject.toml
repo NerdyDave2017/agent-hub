@@ -1,0 +1,33 @@
+# UV workspace root — shared kernel + hub + worker (see `response.md` Phase 1).
+# Run from repo root: `uv sync` then `uv run --package agent-hub-backend ...` / `uv run --package agent-hub-worker ...`
+
+[project]
+name = "agent-hub-workspace"
+version = "0.0.0"
+requires-python = ">=3.11"
+dependencies = [
+  "agent-hub-core",
+  "agent-hub-backend",
+  "agent-hub-worker",
+  "agent-hub-incident-triage",
+]
+
+[tool.uv.sources]
+agent-hub-core = { workspace = true }
+agent-hub-backend = { workspace = true }
+agent-hub-worker = { workspace = true }
+agent-hub-incident-triage = { workspace = true }
+
+[tool.uv.workspace]
+members = ["packages/agent-hub-core", "backend", "worker", "agents/incident-triage"]
+
+[dependency-groups]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.25.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+pythonpath = ["packages/agent-hub-core/src"]
