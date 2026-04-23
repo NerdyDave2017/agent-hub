@@ -2,6 +2,38 @@
 
 Control-plane hub (`backend/`), async worker (`worker/`), and agents — see [`docs/plan.md`](docs/plan.md) and [`Agent.md`](Agent.md).
 
+## UV workspace (Phase 1 + 2)
+
+The repo root [`pyproject.toml`](pyproject.toml) defines a **[`uv` workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/)** with members:
+
+| Member | Role |
+| --- | --- |
+| [`packages/agent-hub-core`](packages/agent-hub-core/) | Shared kernel (`import agent_hub_core`) — settings, async DB, ORM, Alembic, domain, Pydantic schemas, SQS envelope + client helpers. |
+| [`backend/`](backend/) | FastAPI hub only (`main`, `apis/`, `services/`). |
+| [`worker/`](worker/) | SQS worker (`python -m worker`). |
+
+From the **repository root**:
+
+```bash
+uv sync
+```
+
+That creates `.venv/` and installs **agent-hub-core**, **agent-hub-backend**, and **agent-hub-worker** in editable mode. Examples:
+
+```bash
+uv run --package agent-hub-backend --directory backend uvicorn main:app --reload --host 0.0.0.0 --port 8000
+
+uv run --package agent-hub-core alembic -c packages/agent-hub-core/alembic.ini upgrade head
+```
+
+Run the worker (no `PYTHONPATH`):
+
+```bash
+uv run python -m worker
+```
+
+`pydantic-settings` loads `./.env` first, then `backend/.env` when that file exists, so keeping secrets in `backend/.env` still works from the repo root.
+
 ## Hub → worker (SQS) message contract
 
 After the hub commits a row in `jobs`, it will publish **one JSON object** per message (same shape in **local** queues and **AWS SQS**).
@@ -17,7 +49,7 @@ After the hub commits a row in `jobs`, it will publish **one JSON object** per m
 
 **Rules:** the queue body is **not** a second source of truth — treat Postgres as authoritative for status and retries. **Never** put secrets in `payload` or anywhere in the message.
 
-The canonical Pydantic model (serialize with `model_dump(mode="json")`) is [`backend/schemas/sqs_job_envelope.py`](backend/schemas/sqs_job_envelope.py) (`JobQueueEnvelope`).
+The canonical Pydantic model (serialize with `model_dump(mode="json")`) is [`packages/agent-hub-core/src/agent_hub_core/messaging/envelope.py`](packages/agent-hub-core/src/agent_hub_core/messaging/envelope.py) (`JobQueueEnvelope`).
 
 ## Local SQS (LocalStack)
 
@@ -73,9 +105,9 @@ docker compose exec localstack awslocal sqs get-queue-url --queue-name agent-hub
 | `SQS_QUEUE_URL` | Full URL for `agent-hub-jobs` (see above) | Real SQS queue URL |
 | `SQS_DLQ_URL` | DLQ URL (optional on hub; useful for ops scripts) | Real DLQ URL |
 
-These names match [`backend/core/settings.py`](backend/core/settings.py) (`pydantic-settings`). The hub will use the same boto3 client shape locally and in AWS — only `AWS_ENDPOINT_URL` and credentials differ, per [`docs/plan.md`](docs/plan.md).
+These names match [`packages/agent-hub-core/src/agent_hub_core/config/settings.py`](packages/agent-hub-core/src/agent_hub_core/config/settings.py) (`pydantic-settings`). The hub will use the same boto3 client shape locally and in AWS — only `AWS_ENDPOINT_URL` and credentials differ, per [`docs/plan.md`](docs/plan.md).
 
-**Hub enqueue:** when `SQS_QUEUE_URL` is set, `POST /api/v1/tenants/{tenant_id}/jobs` commits the `jobs` row, then calls `SendMessage` with a [`JobQueueEnvelope`](backend/schemas/sqs_job_envelope.py). On success the row becomes **`queued`**; if SQS is misconfigured the row stays **`pending`** and the hub logs a warning with `job_id` / `correlation_id`. If `SQS_QUEUE_URL` is **unset**, rows stay **`pending`** (useful while you only exercise the REST + DB layer).
+**Hub enqueue:** when `SQS_QUEUE_URL` is set, `POST /api/v1/tenants/{tenant_id}/jobs` commits the `jobs` row, then calls `SendMessage` with a **`JobQueueEnvelope`** ([`messaging/envelope.py`](packages/agent-hub-core/src/agent_hub_core/messaging/envelope.py)). On success the row becomes **`queued`**; if SQS is misconfigured the row stays **`pending`** and the hub logs a warning with `job_id` / `correlation_id`. If `SQS_QUEUE_URL` is **unset**, rows stay **`pending`** (useful while you only exercise the REST + DB layer).
 
 **Init script**
 
@@ -112,18 +144,18 @@ export SQS_QUEUE_URL='<paste queue URL from step 1>'
 
 **3. Run migrations**
 
-From `backend/`:
+From the **repository root** (with the workspace `.venv`):
 
 ```bash
-uv run alembic upgrade head
+uv run --package agent-hub-core alembic -c packages/agent-hub-core/alembic.ini upgrade head
 ```
 
 **4. Run the API**
 
-From `backend/`:
+From the **repository root**:
 
 ```bash
-uv run uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uv run --package agent-hub-backend --directory backend uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 **5. Exercise the API**
@@ -152,4 +184,18 @@ docker compose exec localstack awslocal sqs receive-message \
   --queue-url "$SQS_QUEUE_URL" --max-number-of-messages 1
 ```
 
-You should see a JSON body matching [`JobQueueEnvelope`](backend/schemas/sqs_job_envelope.py) (`job_id`, `tenant_id`, `correlation_id`, etc.).
+You should see a JSON body matching **`JobQueueEnvelope`** (see [`messaging/envelope.py`](packages/agent-hub-core/src/agent_hub_core/messaging/envelope.py)) (`job_id`, `tenant_id`, `correlation_id`, etc.).
+
+## Worker (slice 1 — SQS + envelope + DB ping)
+
+The worker lives under [`worker/`](worker/): **orchestration** in [`worker/main.py`](worker/main.py), **structlog → JSON** via [`agent_hub_core.observability.logging`](packages/agent-hub-core/src/agent_hub_core/observability/logging.py) (UTC `timestamp`, `pathname` / `filename` / `lineno` / `func_name`, default `service`), **SQS receive/delete** in [`worker/queue/sqs_receive.py`](worker/queue/sqs_receive.py), and **job dispatch** under [`worker/handlers/`](worker/handlers/) (`registry.py` + per-`JobType` handlers; AWS adapters scaffolded in [`worker/handlers/aws/`](worker/handlers/aws/)).
+
+**Behaviour:** DB ping on startup; long-poll SQS; validate **`JobQueueEnvelope`**; load **`jobs`** row; run the registered handler (stub transitions for now); **`DeleteMessage`** only after the handler completes without raising (malformed envelope, missing job, or handler errors leave the message for retry / DLQ).
+
+From the **repository root** (with Postgres + LocalStack already up and env vars set like the hub smoke test):
+
+```bash
+uv run python -m worker
+```
+
+Use the same `DATABASE_URL`, `SQS_QUEUE_URL`, and AWS variables as the hub. Stop the process with Ctrl+C; the pool is disposed in a `finally` block.

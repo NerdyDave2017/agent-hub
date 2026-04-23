@@ -7,6 +7,8 @@
 #   `scripts/localstack-init/` → `/etc/localstack/init/`. Hub/worker use boto3 with
 #   `AWS_ENDPOINT_URL=http://localhost:4566` from the host, or `http://localstack:4566`
 #   from other compose services.
+# * **hub** — FastAPI control plane (`backend/Dockerfile`); runs Alembic then `uvicorn`.
+# * **worker** — SQS consumer (`worker/Dockerfile`); does **not** run migrations.
 
 services:
   postgres:
@@ -19,6 +21,12 @@ services:
       POSTGRES_DB: postgres
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
 
   localstack:
     image: localstack/localstack:3.8
@@ -35,6 +43,53 @@ services:
       timeout: 5s
       retries: 10
       start_period: 15s
+
+  hub:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/postgres
+      AWS_REGION: us-east-1
+      AWS_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      SQS_QUEUE_URL: http://localstack:4566/000000000000/agent-hub-jobs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: worker/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/postgres
+      AWS_REGION: us-east-1
+      AWS_ENDPOINT_URL: http://localstack:4566
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      SQS_QUEUE_URL: http://localstack:4566/000000000000/agent-hub-jobs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+
+  # Incident triage agent — FastAPI + settings only for now (`agents/incident-triage/README.md`).
+  incident-triage:
+    build:
+      context: .
+      dockerfile: agents/incident-triage/Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      APP_NAME: incident-triage
+      API_V1_PREFIX: /api/v1
 
 volumes:
   postgres_data:
