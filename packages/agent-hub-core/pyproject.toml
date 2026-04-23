@@ -1,0 +1,18 @@
+[project]
+name = "agent-hub-core"
+version = "0.1.0"
+description = "Shared kernel for agent-hub hub and worker (settings, DB, domain, messaging — see response.md Phase 2)"
+requires-python = ">=3.11"
+dependencies = [
+  "asyncpg>=0.30.0",
+  "sqlalchemy[asyncio]>=2.0.36",
+  "pydantic>=2.10.0",
+  "pydantic-settings>=2.6.0",
+  "boto3>=1.35.0",
+  "alembic>=1.14.0",
+  "structlog>=24.4.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.24.0"]
+build-backend = "hatchling.build"
