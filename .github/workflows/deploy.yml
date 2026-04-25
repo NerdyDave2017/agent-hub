@@ -1,0 +1,337 @@
+name: Deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Terraform environment (var.environment)"
+        required: false
+        type: choice
+        options:
+          - staging
+          - production
+      confirmation:
+        description: "For production dispatch, type APPLY-PRODUCTION"
+        required: false
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - "backend/**"
+      - "worker/**"
+      - "agents/incident-triage/**"
+      - "packages/agent-hub-core/**"
+      - "backend/Dockerfile"
+      - "worker/Dockerfile"
+      - "agents/incident-triage/Dockerfile"
+      - ".github/actions/**"
+      - ".github/workflows/deploy.yml"
+
+concurrency:
+  group: deploy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  provision:
+    name: Provision infrastructure
+    runs-on: ubuntu-latest
+    if: vars.DEPLOY_ENABLED == 'true'
+    outputs:
+      aws_account_id: ${{ steps.account.outputs.id }}
+      aws_region: ${{ steps.meta.outputs.aws_region }}
+      environment: ${{ steps.meta.outputs.environment }}
+      ecr_registry: ${{ steps.ecr_registry.outputs.value }}
+      ecr_repository_hub: ${{ steps.outputs.outputs.ecr_repository_hub }}
+      ecr_repository_worker: ${{ steps.outputs.outputs.ecr_repository_worker }}
+      ecr_incident_triage_agent: ${{ steps.outputs.outputs.ecr_incident_triage_agent }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve deploy metadata
+        id: meta
+        shell: bash
+        run: |
+          env_name="${{ inputs.environment }}"
+          if [ -z "$env_name" ]; then
+            env_name="${{ vars.DEPLOY_ENVIRONMENT }}"
+          fi
+          if [ -z "$env_name" ]; then
+            env_name="staging"
+          fi
+          echo "environment=$env_name" >> "$GITHUB_OUTPUT"
+          echo "aws_region=${{ vars.AWS_REGION || 'us-east-1' }}" >> "$GITHUB_OUTPUT"
+
+      - name: Guard production confirmation
+        if: github.event_name == 'workflow_dispatch' && steps.meta.outputs.environment == 'production'
+        shell: bash
+        run: |
+          if [ "${{ inputs.confirmation }}" != "APPLY-PRODUCTION" ]; then
+            echo "::error::For production dispatch, confirmation must be APPLY-PRODUCTION"
+            exit 1
+          fi
+
+      - name: Guard required config
+        shell: bash
+        run: |
+          test -n "${{ vars.TF_VAR_frontend_url }}" || { echo "::error::Missing var TF_VAR_frontend_url"; exit 1; }
+          test -n "${{ secrets.TF_VAR_gmail_oauth_client_id }}" || { echo "::error::Missing secret TF_VAR_gmail_oauth_client_id"; exit 1; }
+          test -n "${{ secrets.TF_VAR_gmail_oauth_client_secret }}" || { echo "::error::Missing secret TF_VAR_gmail_oauth_client_secret"; exit 1; }
+          test -n "${{ secrets.TF_VAR_gmail_webhook_secret }}" || { echo "::error::Missing secret TF_VAR_gmail_webhook_secret"; exit 1; }
+          test -n "${{ secrets.TF_VAR_slack_oauth_client_id }}" || { echo "::error::Missing secret TF_VAR_slack_oauth_client_id"; exit 1; }
+          test -n "${{ secrets.TF_VAR_slack_oauth_client_secret }}" || { echo "::error::Missing secret TF_VAR_slack_oauth_client_secret"; exit 1; }
+          test -n "${{ secrets.TF_VAR_db_password }}" || { echo "::error::Missing secret TF_VAR_db_password"; exit 1; }
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ steps.meta.outputs.aws_region }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+          terraform_wrapper: false
+
+      - name: Resolve AWS account ID
+        id: account
+        shell: bash
+        run: echo "id=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve ECR registry from account and region
+        id: ecr_registry
+        shell: bash
+        run: echo "value=${{ steps.account.outputs.id }}.dkr.ecr.${{ steps.meta.outputs.aws_region }}.amazonaws.com" >> "$GITHUB_OUTPUT"
+
+      - name: Apply vpc
+        uses: ./.github/actions/tf-apply-vpc
+        with:
+          environment: ${{ steps.meta.outputs.environment }}
+          aws-region: ${{ steps.meta.outputs.aws_region }}
+          availability-zones: ${{ vars.TF_VAR_availability_zones || '["us-east-1a","us-east-1b"]' }}
+
+      - name: Apply secrets
+        uses: ./.github/actions/tf-apply-secrets
+        with:
+          environment: ${{ steps.meta.outputs.environment }}
+          aws-region: ${{ steps.meta.outputs.aws_region }}
+
+      - name: Apply rds
+        uses: ./.github/actions/tf-apply-rds
+        with:
+          environment: ${{ steps.meta.outputs.environment }}
+          aws-region: ${{ steps.meta.outputs.aws_region }}
+          db-password: ${{ secrets.TF_VAR_db_password }}
+
+      - name: Bootstrap hub ECR repository
+        uses: ./.github/actions/tf-apply-root
+        with:
+          working-directory: infra/hub
+          apply-args: -target=aws_ecr_repository.hub -target=aws_ecr_lifecycle_policy.hub
+        env:
+          TF_VAR_environment: ${{ steps.meta.outputs.environment }}
+          TF_VAR_aws_region: ${{ steps.meta.outputs.aws_region }}
+          TF_VAR_aws_account_id: ${{ steps.account.outputs.id }}
+          TF_VAR_hub_image_uri: ${{ steps.ecr_registry.outputs.value }}/agent-hub/hub:bootstrap
+          TF_VAR_worker_role_arn: ""
+          TF_VAR_frontend_url: ${{ vars.TF_VAR_frontend_url }}
+          TF_VAR_gmail_pubsub_topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
+          TF_VAR_gcp_project_id: ${{ vars.TF_VAR_gcp_project_id }}
+          TF_VAR_gmail_oauth_client_id: ${{ secrets.TF_VAR_gmail_oauth_client_id }}
+          TF_VAR_gmail_oauth_client_secret: ${{ secrets.TF_VAR_gmail_oauth_client_secret }}
+          TF_VAR_gmail_webhook_secret: ${{ secrets.TF_VAR_gmail_webhook_secret }}
+          TF_VAR_slack_oauth_client_id: ${{ secrets.TF_VAR_slack_oauth_client_id }}
+          TF_VAR_slack_oauth_client_secret: ${{ secrets.TF_VAR_slack_oauth_client_secret }}
+
+      - name: Bootstrap worker ECR repository
+        uses: ./.github/actions/tf-apply-root
+        with:
+          working-directory: infra/worker
+          apply-args: -target=aws_ecr_repository.worker -target=aws_ecr_lifecycle_policy.worker
+        env:
+          TF_VAR_environment: ${{ steps.meta.outputs.environment }}
+          TF_VAR_aws_region: ${{ steps.meta.outputs.aws_region }}
+          TF_VAR_aws_account_id: ${{ steps.account.outputs.id }}
+          TF_VAR_worker_image_uri: ${{ steps.ecr_registry.outputs.value }}/agent-hub/worker:bootstrap
+          TF_VAR_gcp_project_id: ${{ vars.TF_VAR_gcp_project_id }}
+          TF_VAR_gmail_pubsub_topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
+          TF_VAR_ecr_registry: ${{ steps.ecr_registry.outputs.value }}
+
+      - name: Apply agents/incident-triage
+        if: vars.DEPLOY_PUSH_AGENT == 'true'
+        uses: ./.github/actions/tf-apply-root
+        with:
+          working-directory: infra/agents/incident-triage
+        env:
+          TF_VAR_environment: ${{ steps.meta.outputs.environment }}
+          TF_VAR_aws_region: ${{ steps.meta.outputs.aws_region }}
+          TF_VAR_aws_account_id: ${{ steps.account.outputs.id }}
+          TF_VAR_staging_tenant_id: ${{ vars.TF_VAR_staging_tenant_id }}
+          TF_VAR_staging_agent_id: ${{ vars.TF_VAR_staging_agent_id }}
+          TF_VAR_gmail_poll_interval_seconds: ${{ vars.TF_VAR_gmail_poll_interval_seconds || '0' }}
+
+      - name: Export Terraform outputs for downstream stages
+        id: outputs
+        shell: bash
+        env:
+          DEPLOY_PUSH_AGENT: ${{ vars.DEPLOY_PUSH_AGENT }}
+        run: |
+          hub_repo=$(cd infra/hub && terraform output -raw ecr_repository_name)
+          worker_repo=$(cd infra/worker && terraform output -raw ecr_repository_name)
+
+          incident_triage_agent_repo=""
+          if [ "$DEPLOY_PUSH_AGENT" = "true" ]; then
+            incident_triage_agent_repo=$(cd infra/agents/incident-triage && terraform output -raw ecr_repository_name)
+          fi
+
+          echo "ecr_repository_hub=$hub_repo" >> "$GITHUB_OUTPUT"
+          echo "ecr_repository_worker=$worker_repo" >> "$GITHUB_OUTPUT"
+          echo "ecr_incident_triage_agent=$incident_triage_agent_repo" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Build and deploy workloads
+    runs-on: ubuntu-latest
+    needs: provision
+    if: vars.DEPLOY_ENABLED == 'true'
+    outputs:
+      hub_service_url: ${{ steps.final_outputs.outputs.hub_service_url }}
+    env:
+      AWS_REGION: ${{ needs.provision.outputs.aws_region }}
+      AWS_ACCOUNT_ID: ${{ needs.provision.outputs.aws_account_id }}
+      ECR_REGISTRY: ${{ needs.provision.outputs.ecr_registry }}
+      ECR_REPOSITORY_HUB: ${{ needs.provision.outputs.ecr_repository_hub }}
+      ECR_REPOSITORY_WORKER: ${{ needs.provision.outputs.ecr_repository_worker }}
+      ECR_INCIDENT_TRIAGE_AGENT: ${{ needs.provision.outputs.ecr_incident_triage_agent }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push hub image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_HUB }}:${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_HUB }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push worker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: worker/Dockerfile
+          push: true
+          tags: |
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_WORKER }}:${{ github.sha }}
+            ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_WORKER }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push incident-triage image
+        if: env.ECR_INCIDENT_TRIAGE_AGENT != ''
+        uses: ./.github/actions/build-push-incident-triage
+        with:
+          aws-region: ${{ env.AWS_REGION }}
+          aws-account-id: ${{ env.AWS_ACCOUNT_ID }}
+          repository: ${{ env.ECR_INCIDENT_TRIAGE_AGENT }}
+          image-tag: ${{ github.sha }}
+
+      - name: Apply hub (initial)
+        uses: ./.github/actions/tf-apply-hub
+        with:
+          environment: ${{ needs.provision.outputs.environment }}
+          aws-region: ${{ env.AWS_REGION }}
+          aws-account-id: ${{ env.AWS_ACCOUNT_ID }}
+          hub-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_HUB }}:${{ github.sha }}
+          worker-role-arn: ""
+          frontend-url: ${{ vars.TF_VAR_frontend_url }}
+          gmail-pubsub-topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
+          gcp-project-id: ${{ vars.TF_VAR_gcp_project_id }}
+          gmail-oauth-client-id: ${{ secrets.TF_VAR_gmail_oauth_client_id }}
+          gmail-oauth-client-secret: ${{ secrets.TF_VAR_gmail_oauth_client_secret }}
+          gmail-webhook-secret: ${{ secrets.TF_VAR_gmail_webhook_secret }}
+          slack-oauth-client-id: ${{ secrets.TF_VAR_slack_oauth_client_id }}
+          slack-oauth-client-secret: ${{ secrets.TF_VAR_slack_oauth_client_secret }}
+
+      - name: Apply worker
+        uses: ./.github/actions/tf-apply-worker
+        with:
+          environment: ${{ needs.provision.outputs.environment }}
+          aws-region: ${{ env.AWS_REGION }}
+          aws-account-id: ${{ env.AWS_ACCOUNT_ID }}
+          worker-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_WORKER }}:${{ github.sha }}
+          gcp-project-id: ${{ vars.TF_VAR_gcp_project_id }}
+          gmail-pubsub-topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
+          ecr-registry: ${{ env.ECR_REGISTRY }}
+
+      - name: Read worker role ARN
+        id: worker_role
+        shell: bash
+        working-directory: infra/worker
+        run: echo "arn=$(terraform output -raw worker_task_role_arn)" >> "$GITHUB_OUTPUT"
+
+      - name: Apply hub (with worker SQS policy)
+        uses: ./.github/actions/tf-apply-hub
+        with:
+          environment: ${{ needs.provision.outputs.environment }}
+          aws-region: ${{ env.AWS_REGION }}
+          aws-account-id: ${{ env.AWS_ACCOUNT_ID }}
+          hub-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_HUB }}:${{ github.sha }}
+          worker-role-arn: ${{ steps.worker_role.outputs.arn }}
+          frontend-url: ${{ vars.TF_VAR_frontend_url }}
+          gmail-pubsub-topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
+          gcp-project-id: ${{ vars.TF_VAR_gcp_project_id }}
+          gmail-oauth-client-id: ${{ secrets.TF_VAR_gmail_oauth_client_id }}
+          gmail-oauth-client-secret: ${{ secrets.TF_VAR_gmail_oauth_client_secret }}
+          gmail-webhook-secret: ${{ secrets.TF_VAR_gmail_webhook_secret }}
+          slack-oauth-client-id: ${{ secrets.TF_VAR_slack_oauth_client_id }}
+          slack-oauth-client-secret: ${{ secrets.TF_VAR_slack_oauth_client_secret }}
+
+      - name: Read deployment targets
+        shell: bash
+        run: |
+          echo "HUB_SERVICE_ARN=$(cd infra/hub && terraform output -raw hub_service_arn)" >> "$GITHUB_ENV"
+          echo "HUB_SERVICE_URL=$(cd infra/hub && terraform output -raw hub_service_url)" >> "$GITHUB_ENV"
+          echo "WORKER_CLUSTER_NAME=$(cd infra/worker && terraform output -raw worker_cluster_name)" >> "$GITHUB_ENV"
+          echo "WORKER_SERVICE_NAME=$(cd infra/worker && terraform output -raw worker_service_name)" >> "$GITHUB_ENV"
+
+      - name: Roll out hub App Runner
+        shell: bash
+        run: aws apprunner start-deployment --service-arn "$HUB_SERVICE_ARN" --no-cli-pager
+
+      - name: Roll out worker ECS service
+        shell: bash
+        run: |
+          aws ecs update-service \
+            --cluster "$WORKER_CLUSTER_NAME" \
+            --service "$WORKER_SERVICE_NAME" \
+            --force-new-deployment \
+            --no-cli-pager
+
+      - name: Export final deploy outputs
+        id: final_outputs
+        shell: bash
+        run: |
+          hub_service_url="$HUB_SERVICE_URL"
+          if [[ ! "$hub_service_url" =~ ^https:// ]]; then
+            hub_service_url="https://$hub_service_url"
+          fi
+
+          echo "hub_service_url=$hub_service_url" >> "$GITHUB_OUTPUT"
+          echo "Hub App Runner URL: $hub_service_url" >> "$GITHUB_STEP_SUMMARY"
