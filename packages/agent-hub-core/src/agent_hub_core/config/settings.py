@@ -84,8 +84,8 @@ class Settings(BaseSettings):
     # --- Gmail Pub/Sub + OAuth (operator / hub — see gmail-pubsub-implementation.md) ---
     hub_public_url: str = Field(
         default="http://127.0.0.1:8000",
-        validation_alias="HUB_PUBLIC_URL",
-        description="Public hub base URL for OAuth redirects (no trailing path).",
+        validation_alias=AliasChoices("HUB_PUBLIC_URL", "HUB_BASE_URL"),
+        description="Public hub base URL (OAuth, agent runtime env AGENT_HUB_PUBLIC_URL). ECS often sets HUB_BASE_URL.",
     )
     gmail_pubsub_topic: str = Field(
         default="",
@@ -103,17 +103,84 @@ class Settings(BaseSettings):
         validation_alias="INCIDENT_TRIAGE_AGENT_URL",
         description="Worker calls this base URL when no live Deployment.base_url (local dev).",
     )
+
+    # --- Worker: App Runner CreateService (optional; Terraform supplies ARNs + ECR image) ---
+    app_runner_create_access_role_arn: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "APP_RUNNER_CREATE_ACCESS_ROLE_ARN",
+            "AGENT_ECR_ACCESS_ROLE_ARN",
+        ),
+        description="IAM role App Runner assumes to pull from ECR (Terraform worker outputs AGENT_ECR_ACCESS_ROLE_ARN).",
+    )
+    app_runner_create_instance_role_arn: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "APP_RUNNER_CREATE_INSTANCE_ROLE_ARN",
+            "AGENT_INSTANCE_ROLE_ARN",
+        ),
+        description="Instance role for the agent container (Terraform worker outputs AGENT_INSTANCE_ROLE_ARN).",
+    )
+    app_runner_create_image_identifier: str = Field(
+        default="",
+        validation_alias="APP_RUNNER_CREATE_IMAGE_IDENTIFIER",
+        description="ECR image URI and tag, e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/agent:1.0.0",
+    )
+    app_runner_create_port: str = Field(default="8080", validation_alias="APP_RUNNER_CREATE_PORT")
+    app_runner_create_cpu: str = Field(default="1024", validation_alias="APP_RUNNER_CREATE_CPU")
+    app_runner_create_memory: str = Field(default="2048", validation_alias="APP_RUNNER_CREATE_MEMORY")
+    app_runner_create_health_check_path: str = Field(
+        default="/health",
+        validation_alias="APP_RUNNER_CREATE_HEALTH_CHECK_PATH",
+    )
+    app_runner_create_auto_deployments_enabled: bool = Field(
+        default=False,
+        validation_alias="APP_RUNNER_CREATE_AUTO_DEPLOYMENTS_ENABLED",
+    )
+    app_runner_create_auto_scaling_configuration_arn: str = Field(
+        default="",
+        validation_alias="APP_RUNNER_CREATE_AUTO_SCALING_CONFIGURATION_ARN",
+    )
+    app_runner_create_vpc_connector_arn: str = Field(
+        default="",
+        validation_alias="APP_RUNNER_CREATE_VPC_CONNECTOR_ARN",
+        description="When set, egress uses this VPC connector (private RDS, etc.).",
+    )
     gmail_renewal_scheduler_seconds: int = Field(
         default=86_400,
         ge=0,
         validation_alias="GMAIL_RENEWAL_SCHEDULER_SECONDS",
         description="Worker background loop: enqueue gmail_watch_renewal for expiring integrations; 0 disables.",
     )
+    metrics_rollup_scheduler_seconds: int = Field(
+        default=3_600,
+        ge=0,
+        validation_alias="METRICS_ROLLUP_SCHEDULER_SECONDS",
+        description="Worker background loop: enqueue metrics_rollup for each active agent for the previous UTC hour; 0 disables.",
+    )
     langfuse_host: str = Field(
         default="https://cloud.langfuse.com",
         validation_alias="LANGFUSE_HOST",
         description="Public Langfuse UI base URL for dashboard trace links (no secrets).",
     )
+    langfuse_public_key: str = Field(
+        default="",
+        validation_alias="LANGFUSE_PUBLIC_KEY",
+        description="Langfuse public API key — optional; worker metrics rollup calls Langfuse Metrics API when set with LANGFUSE_SECRET_KEY.",
+    )
+    langfuse_secret_key: str = Field(
+        default="",
+        validation_alias="LANGFUSE_SECRET_KEY",
+        description="Langfuse secret API key — optional pair with LANGFUSE_PUBLIC_KEY for rollup enrichment.",
+    )
+    jwt_secret_key: str = Field(
+        default="",
+        validation_alias="JWT_SECRET_KEY",
+        description="HS256 secret for hub-issued access tokens (dashboard + auth/login).",
+    )
+    jwt_algorithm: str = Field(default="HS256", validation_alias="JWT_ALGORITHM")
+    jwt_expire_minutes: int = Field(default=60, ge=5, le=24 * 60, validation_alias="JWT_EXPIRE_MINUTES")
+    jwt_issuer: str = Field(default="agent-hub", validation_alias="JWT_ISSUER")
 
     @computed_field  # type: ignore[prop-decorator]
     @property

@@ -7,6 +7,27 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 _SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+_NON_SLUG_CHARS = re.compile(r"[^a-z0-9]+")
+
+
+def slug_from_workspace_name(name: str) -> str:
+    """
+    Derive a valid tenant ``slug`` from arbitrary workspace / org text.
+
+    Falls back to ``workspace`` when the label yields nothing URL-safe. Caller should
+    append a short suffix on unique-constraint conflicts.
+    """
+    raw = (name or "").strip().lower()
+    s = _NON_SLUG_CHARS.sub("-", raw).strip("-")
+    while "--" in s:
+        s = s.replace("--", "-")
+    if not s:
+        s = "workspace"
+    if not _SLUG_RE.match(s):
+        s = "workspace"
+    if len(s) < 2:
+        s = (s + "x")[:2]
+    return s[:128]
 
 
 class TenantCreate(BaseModel):

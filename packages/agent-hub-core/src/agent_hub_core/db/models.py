@@ -113,6 +113,9 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=true()
     )  # soft-disable login without deleting the row
+    password_hash: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )  # bcrypt hash; null until operator sets password (dashboard login)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     tenant: Mapped[Tenant] = relationship(back_populates="users")

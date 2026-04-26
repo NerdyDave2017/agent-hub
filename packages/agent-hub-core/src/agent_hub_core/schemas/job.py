@@ -56,6 +56,7 @@ class JobRead(BaseModel):
     agent_id: uuid.UUID | None
     job_type: str
     status: JobStatus
+    job_step: str | None = None
     correlation_id: str | None
     idempotency_key: str | None
     payload: dict[str, Any] | None

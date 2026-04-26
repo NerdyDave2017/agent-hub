@@ -60,3 +60,31 @@ class SafeIncidentRow(BaseModel):
 
 class IncidentDetailResponse(SafeIncidentRow):
     langfuse_trace_url: str | None = None
+
+
+class AgentOverviewResponse(BaseModel):
+    """Per-agent rollup for the observability dashboard (Postgres)."""
+
+    agent_id: str
+    name: str
+    agent_type: str
+    status: str
+    window_days: int
+    total_tokens: int
+    total_cost_usd: float
+    incidents_count: int
+
+
+class AgentTokenDailyRow(BaseModel):
+    day: str
+    tokens: int = 0
+    cost_usd: float = 0.0
+
+
+class MetricSnapshotRow(BaseModel):
+    """Hourly (or custom) KPI bag from ``metric_snapshots`` — scoped by agent *type* rollups."""
+
+    agent_type: str
+    window_start: str
+    window_end: str | None
+    metrics: dict[str, Any] = Field(default_factory=dict)
