@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from uuid import UUID
 
@@ -291,6 +292,29 @@ class AgentProvisioningHandler(AbstractJobHandler):
             hub = (settings.hub_public_url or "").strip()
             if hub:
                 runtime_env["AGENT_HUB_PUBLIC_URL"] = hub
+                runtime_env["HUB_BASE_URL"] = hub
+
+            region = (settings.aws_region or "").strip()
+            if region:
+                runtime_env["AWS_REGION"] = region
+
+            env_name = os.environ.get("ENVIRONMENT", "").strip()
+            if env_name:
+                runtime_env["ENVIRONMENT"] = env_name
+
+            db_url = (settings.async_database_url or "").strip()
+            if db_url:
+                runtime_env["DATABASE_URL"] = db_url
+
+            lf_host = (settings.langfuse_host or "").strip()
+            if lf_host:
+                runtime_env["LANGFUSE_HOST"] = lf_host
+            lf_pk = (settings.langfuse_public_key or "").strip()
+            if lf_pk:
+                runtime_env["LANGFUSE_PUBLIC_KEY"] = lf_pk
+            lf_sk = (settings.langfuse_secret_key or "").strip()
+            if lf_sk:
+                runtime_env["LANGFUSE_SECRET_KEY"] = lf_sk
 
             try:
 

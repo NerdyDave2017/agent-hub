@@ -140,7 +140,6 @@ resource "aws_iam_role_policy" "agent_instance" {
         ]
         Resource = [
           "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${local.project}/${local.environment}/tenant/*",
-          data.terraform_remote_state.secrets.outputs.langfuse_secret_arn,
         ]
       },
       {

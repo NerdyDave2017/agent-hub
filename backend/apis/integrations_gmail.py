@@ -204,7 +204,7 @@ async def gmail_oauth_callback(
         existing.email_address = email_address
         existing.last_history_id = history_id
         existing.watch_expires_at = watch_expires_at
-        existing.watch_active = false
+        existing.watch_active = False
         existing.watch_resource_id = str(watch_response.get("resourceId") or "")
         existing.connection_status = "active"
         existing.scopes = scopes_str
@@ -219,7 +219,7 @@ async def gmail_oauth_callback(
                 email_address=email_address,
                 last_history_id=history_id,
                 watch_expires_at=watch_expires_at,
-                watch_active=false,
+                watch_active=False,
                 watch_resource_id=str(watch_response.get("resourceId") or ""),
                 connection_status="active",
             )
