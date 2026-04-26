@@ -203,7 +203,7 @@ def create_app() -> FastAPI:
         response.headers["X-Correlation-ID"] = cid
         return response
 
-    @app.get("/health", tags=["system"])
+    @app.get("/health", tags=["system"], response_model=None)
     async def health(request: Request) -> dict[str, str] | JSONResponse:
         s = get_settings()
         if not request.app.state.bootstrap_finished.is_set():
