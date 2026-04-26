@@ -81,7 +81,9 @@ async def lifespan(app: FastAPI):
         poll_task: asyncio.Task[None] | None = None
         try:
             try:
-                settings.resolve_secrets()
+                # Sync boto3; run off the event loop so /health stays responsive during SM reads
+                # (App Runner treats missed responses as failed health checks).
+                await asyncio.to_thread(settings.resolve_secrets)
             except (ClientError, BotoCoreError) as exc:
                 log.error(
                     "secrets_resolution_failed",

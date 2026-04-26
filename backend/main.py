@@ -14,6 +14,7 @@ from typing import Annotated, Any
 from fastapi import Depends, FastAPI, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from starlette.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_hub_core.config.settings import get_settings
@@ -56,6 +57,14 @@ def create_app() -> FastAPI:
             {"name": "dashboard", "description": "Tenant overview and per-agent observability (Postgres)"},
             {"name": "auth", "description": "JWT sign-up and login for dashboard APIs"},
         ],
+    )
+    # Demo: permissive CORS so any origin (e.g. localhost UI → App Runner API) can call the hub.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     @app.get("/health", response_model=HealthResponse, tags=["system"])

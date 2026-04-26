@@ -62,7 +62,7 @@ class AppRunnerAdapter:
                 "Protocol": "HTTP",
                 "Path": health_check_path,
                 "Interval": 10,
-                "Timeout": 5,
+                "Timeout": 15,
                 "HealthyThreshold": 1,
                 "UnhealthyThreshold": 5,
             },
