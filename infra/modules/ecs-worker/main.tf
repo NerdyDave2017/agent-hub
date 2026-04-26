@@ -3,6 +3,28 @@ locals {
     Project     = var.project
     Environment = var.environment
   }
+  # App Runner CreateService validates iam:PassRole per role; bind each ARN to the service
+  # principal AWS uses for that role (wildcard Resource + multi-value PassedToService is brittle).
+  apprunner_pass_role_statements = concat(
+    trimspace(var.agent_instance_role_arn) != "" ? [{
+      Sid      = "IAMPassAgentInstanceForAppRunner"
+      Effect   = "Allow"
+      Action   = "iam:PassRole"
+      Resource = var.agent_instance_role_arn
+      Condition = {
+        StringEquals = { "iam:PassedToService" = "tasks.apprunner.amazonaws.com" }
+      }
+    }] : [],
+    trimspace(var.agent_ecr_access_role_arn) != "" ? [{
+      Sid      = "IAMPassAgentEcrAccessForAppRunner"
+      Effect   = "Allow"
+      Action   = "iam:PassRole"
+      Resource = var.agent_ecr_access_role_arn
+      Condition = {
+        StringEquals = { "iam:PassedToService" = "build.apprunner.amazonaws.com" }
+      }
+    }] : [],
+  )
 }
 
 resource "aws_ecs_cluster" "worker" {
@@ -83,7 +105,7 @@ resource "aws_iam_role_policy" "task" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Sid    = "SQSConsume"
         Effect = "Allow"
@@ -140,23 +162,7 @@ resource "aws_iam_role_policy" "task" {
         ]
         Resource = "*"
       },
-      {
-        Sid    = "IAMPassAgentRole"
-        Effect = "Allow"
-        Action = "iam:PassRole"
-        Resource = [
-          "arn:aws:iam::${var.aws_account_id}:role/${var.project}-${var.environment}-agent-*",
-        ]
-        Condition = {
-          StringEquals = {
-            "iam:PassedToService" = [
-              "apprunner.amazonaws.com",
-              "build.apprunner.amazonaws.com",
-              "tasks.apprunner.amazonaws.com",
-            ]
-          }
-        }
-      },
+      ], local.apprunner_pass_role_statements, [
       {
         Sid    = "ECRDescribe"
         Effect = "Allow"
@@ -182,7 +188,7 @@ resource "aws_iam_role_policy" "task" {
         Action   = ["logs:CreateLogGroup", "logs:TagLogGroup"]
         Resource = "arn:aws:logs:${var.aws_region}:${var.aws_account_id}:log-group:/apprunner/${var.project}/${var.environment}/agent-*"
       },
-    ]
+    ])
   })
 }
 
