@@ -83,6 +83,10 @@ class AppRunnerAdapter:
     def describe_service(self, service_arn: str) -> dict[str, Any]:
         return self._client.describe_service(ServiceArn=service_arn)
 
+    def list_operations(self, service_arn: str) -> dict[str, Any]:
+        """Most recent operation first — use to detect FAILED deployments before Describe hits RUNNING."""
+        return self._client.list_operations(ServiceArn=service_arn)
+
     def pause_service(self, service_arn: str) -> None:
         self._client.pause_service(ServiceArn=service_arn)
 

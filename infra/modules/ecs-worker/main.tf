@@ -150,6 +150,7 @@ resource "aws_iam_role_policy" "task" {
           "apprunner:UpdateService",
           "apprunner:DeleteService",
           "apprunner:DescribeService",
+          "apprunner:ListOperations",
           "apprunner:ListServices",
           "apprunner:PauseService",
           "apprunner:ResumeService",

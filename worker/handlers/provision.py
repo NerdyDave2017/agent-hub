@@ -82,13 +82,41 @@ async def _wait_apprunner_running(
     service_arn: str,
     *,
     interval_s: float = 4.0,
-    max_wait_s: float = 420.0,
+    max_wait_s: float = 900.0,
 ) -> dict:
-    """Poll ``DescribeService`` until ``RUNNING`` or terminal failure."""
+    """
+    Poll until ``DescribeService.Status == RUNNING``.
+
+    While App Runner shows ``OPERATION_IN_PROGRESS`` (normal during deploy), also poll
+    ``ListOperations`` so a **FAILED** / **ROLLBACK_*** create surfaces immediately instead
+    of waiting for the full timeout.
+    """
     deadline = time.monotonic() + max_wait_s
     adapter = AppRunnerAdapter(settings)
     last: dict = {}
+    _terminal_ops = frozenset({"FAILED", "ROLLBACK_FAILED", "ROLLBACK_SUCCEEDED"})
+
     while time.monotonic() < deadline:
+
+        def _ops() -> dict:
+            return adapter.list_operations(service_arn)
+
+        try:
+            ops_raw = await asyncio.to_thread(_ops)
+            op_list = ops_raw.get("OperationSummaryList") if isinstance(ops_raw, dict) else None
+            if isinstance(op_list, list) and op_list:
+                latest = op_list[0]
+                if isinstance(latest, dict):
+                    op_status = str(latest.get("Status") or "")
+                    if op_status in _terminal_ops:
+                        raise RuntimeError(
+                            f"App Runner operation {latest.get('Type')!r} ended with {op_status!r}: {latest!r}"
+                        )
+        except RuntimeError:
+            raise
+        except Exception:
+            # ListOperations is best-effort (permissions / transient API errors).
+            pass
 
         def _desc() -> dict:
             return adapter.describe_service(service_arn)
@@ -105,7 +133,15 @@ async def _wait_apprunner_running(
         if status in ("CREATE_FAILED", "DELETE_FAILED", "DELETED"):
             raise RuntimeError(f"App Runner service {status}: {svc!r}")
         await asyncio.sleep(interval_s)
-    raise TimeoutError(f"App Runner did not reach RUNNING within {max_wait_s}s: {last!r}")
+
+    last_status = last.get("Status") if isinstance(last, dict) else None
+    last_url = last.get("ServiceUrl") if isinstance(last, dict) else None
+    raise TimeoutError(
+        f"App Runner did not reach RUNNING within {max_wait_s}s (last Status={last_status!r}, "
+        f"ServiceUrl={last_url!r}). "
+        "Common causes: container not listening on the health-check port (worker uses 8080 by default), "
+        "/health not returning 200, or startup crash — inspect App Runner deployment logs."
+    )
 
 
 class AgentProvisioningHandler(AbstractJobHandler):

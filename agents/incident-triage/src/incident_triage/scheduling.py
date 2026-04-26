@@ -15,6 +15,20 @@ from incident_triage.settings import get_settings
 log = get_logger(__name__)
 
 
+async def await_agent_bootstrap(app: FastAPI, *, timeout_s: float = 600.0) -> None:
+    """Wait until background lifespan init finished (graph + DB) or timeout / failure."""
+    fin = getattr(app.state, "bootstrap_finished", None)
+    if fin is not None:
+        try:
+            await asyncio.wait_for(fin.wait(), timeout=timeout_s)
+        except asyncio.TimeoutError as exc:
+            raise RuntimeError("agent bootstrap timed out") from exc
+        if not getattr(app.state, "bootstrap_ok", False):
+            raise RuntimeError("incident triage agent bootstrap failed (see logs)")
+    if getattr(app.state, "graph", None) is None:
+        raise RuntimeError("graph not initialized")
+
+
 def thread_id_for_message(message_id: str) -> str:
     s = get_settings()
     return f"{s.agent_id or 'local'}:{message_id}"
@@ -22,6 +36,7 @@ def thread_id_for_message(message_id: str) -> str:
 
 async def invoke_graph_run(app: FastAPI, message_id: str) -> None:
     """Await one full triage graph execution (use from tasks or tests)."""
+    await await_agent_bootstrap(app)
     s = get_settings()
     tid = thread_id_for_message(message_id)
     callbacks: list = []

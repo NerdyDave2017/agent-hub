@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager, suppress
 
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import FastAPI, HTTPException, Request
-from starlette.responses import Response
+from starlette.responses import JSONResponse, Response
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from pydantic import BaseModel, Field
 from psycopg.rows import dict_row
@@ -61,90 +61,117 @@ class AgentPublicMeta(BaseModel):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Open DB + checkpoint pool + compiled graph at startup; close pool and SQLAlchemy on shutdown."""
+    """
+    Start HTTP quickly for App Runner health checks, then finish DB/graph init in the background.
+
+    Starlette does not accept connections until this context **yields**. If Postgres or Secrets
+    Manager is slow or wedged, blocking here caused ``/health`` on port 8080 to never respond and
+    App Runner deployments to fail after long health-check timeouts.
+    """
     log = get_logger(__name__)
-    settings = get_settings()
-
-    try:
-        settings.resolve_secrets()
-    except (ClientError, BotoCoreError) as exc:
-        log.error(
-            "secrets_resolution_failed",
-            phase="startup",
-            error=str(exc),
-            tenant_id=settings.tenant_id or None,
-            agent_id=settings.agent_id or None,
-        )
-        raise
-
-    # Langfuse SDK v3+ reads ``LANGFUSE_*`` from the process environment. Hydrate from resolved
-    # settings when unset so ``CallbackHandler(public_key=..., trace_context=...)`` can export spans.
-    if settings.langfuse_public_key.strip():
-        os.environ.setdefault("LANGFUSE_PUBLIC_KEY", settings.langfuse_public_key.strip())
-    if settings.langfuse_secret_key.strip():
-        os.environ.setdefault("LANGFUSE_SECRET_KEY", settings.langfuse_secret_key.strip())
-    if settings.langfuse_host.strip():
-        os.environ.setdefault("LANGFUSE_BASE_URL", settings.langfuse_host.strip().rstrip("/"))
-
     app.state.session_factory = None
     app.state.checkpoint_pool = None
-    if settings.database_url.strip():
-        configure_database(settings.database_url)
-        await init_agent_schema()
-        app.state.session_factory = get_session_factory()
-        pool = AsyncConnectionPool(
-            conninfo=psycopg_conninfo(settings.database_url),
-            open=False,
-            kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
-            min_size=1,
-            max_size=10,
-        )
-        await pool.open()
-        checkpointer = AsyncPostgresSaver(conn=pool)
-        await checkpointer.setup()
-        app.state.graph = build_graph(checkpointer)
-        app.state.checkpoint_pool = pool
-    else:
-        app.state.graph = build_graph(None)
+    app.state.graph = None
+    app.state.bootstrap_finished = asyncio.Event()
+    app.state.bootstrap_ok = False
+    app.state.gmail_poll_task = None
 
-    log.info(
-        "agent_ready",
-        phase="startup",
-        service="incident_triage",
-        app_name=settings.app_name,
-        tenant_id=settings.tenant_id or None,
-        agent_id=settings.agent_id or None,
-        environment=settings.environment,
-        secrets_manager_hydration=settings.secrets_manager_hydration,
-        database_configured=app.state.session_factory is not None,
-        gmail_poll_interval_seconds=settings.gmail_poll_interval_seconds,
-    )
+    async def _bootstrap() -> None:
+        settings = get_settings()
+        poll_task: asyncio.Task[None] | None = None
+        try:
+            try:
+                settings.resolve_secrets()
+            except (ClientError, BotoCoreError) as exc:
+                log.error(
+                    "secrets_resolution_failed",
+                    phase="startup",
+                    error=str(exc),
+                    tenant_id=settings.tenant_id or None,
+                    agent_id=settings.agent_id or None,
+                )
+                raise
 
-    poll_task: asyncio.Task[None] | None = None
-    if settings.gmail_poll_interval_seconds > 0:
+            if settings.langfuse_public_key.strip():
+                os.environ.setdefault("LANGFUSE_PUBLIC_KEY", settings.langfuse_public_key.strip())
+            if settings.langfuse_secret_key.strip():
+                os.environ.setdefault("LANGFUSE_SECRET_KEY", settings.langfuse_secret_key.strip())
+            if settings.langfuse_host.strip():
+                os.environ.setdefault("LANGFUSE_BASE_URL", settings.langfuse_host.strip().rstrip("/"))
 
-        async def _gmail_poll_loop() -> None:
-            from incident_triage.triggers import poller as poller_mod
+            if settings.database_url.strip():
+                configure_database(settings.database_url)
+                await init_agent_schema()
+                app.state.session_factory = get_session_factory()
+                pool = AsyncConnectionPool(
+                    conninfo=psycopg_conninfo(settings.database_url),
+                    open=False,
+                    kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
+                    min_size=1,
+                    max_size=10,
+                )
+                await pool.open()
+                checkpointer = AsyncPostgresSaver(conn=pool)
+                await checkpointer.setup()
+                app.state.graph = build_graph(checkpointer)
+                app.state.checkpoint_pool = pool
+            else:
+                app.state.graph = build_graph(None)
 
-            while True:
-                interval = get_settings().gmail_poll_interval_seconds
-                if interval <= 0:
-                    return
-                await asyncio.sleep(interval)
-                if await poller_mod.is_gmail_hub_push_watch_active(app):
-                    log.debug("gmail_poll_skipped_hub_watch_active")
-                else:
-                    await poller_mod.poll_unread_and_schedule(app)
+            log.info(
+                "agent_ready",
+                phase="startup",
+                service="incident_triage",
+                app_name=settings.app_name,
+                tenant_id=settings.tenant_id or None,
+                agent_id=settings.agent_id or None,
+                environment=settings.environment,
+                secrets_manager_hydration=settings.secrets_manager_hydration,
+                database_configured=app.state.session_factory is not None,
+                gmail_poll_interval_seconds=settings.gmail_poll_interval_seconds,
+            )
 
-        poll_task = asyncio.create_task(_gmail_poll_loop())
-        app.state.gmail_poll_task = poll_task
+            if settings.gmail_poll_interval_seconds > 0:
+
+                async def _gmail_poll_loop() -> None:
+                    from incident_triage.triggers import poller as poller_mod
+
+                    while True:
+                        interval = get_settings().gmail_poll_interval_seconds
+                        if interval <= 0:
+                            return
+                        await asyncio.sleep(interval)
+                        if await poller_mod.is_gmail_hub_push_watch_active(app):
+                            log.debug("gmail_poll_skipped_hub_watch_active")
+                        else:
+                            await poller_mod.poll_unread_and_schedule(app)
+
+                poll_task = asyncio.create_task(_gmail_poll_loop())
+                app.state.gmail_poll_task = poll_task
+
+            app.state.bootstrap_ok = True
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("agent_bootstrap_failed", phase="startup")
+            app.state.bootstrap_ok = False
+        finally:
+            app.state.bootstrap_finished.set()
+
+    boot = asyncio.create_task(_bootstrap())
+    app.state._bootstrap_task = boot
 
     yield
 
-    if poll_task is not None:
-        poll_task.cancel()
+    boot.cancel()
+    with suppress(asyncio.CancelledError):
+        await boot
+
+    poll = getattr(app.state, "gmail_poll_task", None)
+    if poll is not None:
+        poll.cancel()
         with suppress(asyncio.CancelledError):
-            await poll_task
+            await poll
         app.state.gmail_poll_task = None
 
     if app.state.checkpoint_pool is not None:
@@ -175,8 +202,26 @@ def create_app() -> FastAPI:
         return response
 
     @app.get("/health", tags=["system"])
-    async def health() -> dict[str, str]:
+    async def health(request: Request) -> dict[str, str] | JSONResponse:
         s = get_settings()
+        if not request.app.state.bootstrap_finished.is_set():
+            return {
+                "status": "starting",
+                "service": "incident_triage",
+                "tenant_id": s.tenant_id,
+                "agent_id": s.agent_id,
+                "environment": s.environment,
+                "database": "unknown",
+            }
+        if not request.app.state.bootstrap_ok:
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "status": "unhealthy",
+                    "service": "incident_triage",
+                    "detail": "bootstrap_failed",
+                },
+            )
         return {
             "status": "ok",
             "service": "incident_triage",
@@ -258,6 +303,10 @@ def create_app() -> FastAPI:
 
     @app.get(f"{settings.api_v1_prefix}/traces/{{thread_id}}", tags=["agent"])
     async def trace_state(thread_id: str, request: Request) -> dict:
+        if not request.app.state.bootstrap_finished.is_set():
+            raise HTTPException(status_code=503, detail="agent starting")
+        if not request.app.state.bootstrap_ok:
+            raise HTTPException(status_code=503, detail="agent bootstrap failed")
         if request.app.state.checkpoint_pool is None:
             raise HTTPException(status_code=503, detail="checkpointing requires DATABASE_URL")
         snap = await request.app.state.graph.aget_state(

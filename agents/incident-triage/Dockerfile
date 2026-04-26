@@ -16,6 +16,8 @@ COPY agents/incident-triage /app/agents/incident-triage
 WORKDIR /app/agents/incident-triage
 RUN pip install --no-cache-dir -e /app/packages/agent-hub-core -e .
 
-EXPOSE 8001
+# Must match hub/worker App Runner create defaults (APP_RUNNER_CREATE_PORT=8080) or health checks hang.
+ENV PORT=8080
+EXPOSE 8080
 
-CMD ["uvicorn", "incident_triage.main:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["uvicorn", "incident_triage.main:app", "--host", "0.0.0.0", "--port", "8080"]
