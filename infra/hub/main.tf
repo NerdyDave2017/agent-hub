@@ -171,6 +171,7 @@ module "apprunner" {
     SLACK_OAUTH_CLIENT_ID     = var.slack_oauth_client_id
     SLACK_OAUTH_CLIENT_SECRET = var.slack_oauth_client_secret
     GMAIL_WEBHOOK_SECRET      = var.gmail_webhook_secret
+    LANGFUSE_HOST             = var.langfuse_host
   }
 
   environment_secrets = {

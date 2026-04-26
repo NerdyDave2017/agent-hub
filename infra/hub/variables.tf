@@ -62,3 +62,8 @@ variable "alarm_sns_arns" {
   type    = list(string)
   default = []
 }
+
+variable "langfuse_host" {
+  type    = string
+  default = "https://cloud.langfuse.com"
+}

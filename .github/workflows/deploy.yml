@@ -15,7 +15,7 @@ on:
         required: false
         type: string
   push:
-    branches: [main]
+    branches: [ main ]
     paths:
       - "infra/**"
       - "backend/**"
@@ -67,7 +67,8 @@ jobs:
           echo "aws_region=${{ vars.AWS_REGION || 'us-east-1' }}" >> "$GITHUB_OUTPUT"
 
       - name: Guard production confirmation
-        if: github.event_name == 'workflow_dispatch' && steps.meta.outputs.environment == 'production'
+        if: github.event_name == 'workflow_dispatch' && steps.meta.outputs.environment
+          == 'production'
         shell: bash
         run: |
           if [ "${{ inputs.confirmation }}" != "APPLY-PRODUCTION" ]; then
@@ -99,19 +100,22 @@ jobs:
       - name: Resolve AWS account ID
         id: account
         shell: bash
-        run: echo "id=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_OUTPUT"
+        run: echo "id=$(aws sts get-caller-identity --query Account --output text)" >>
+          "$GITHUB_OUTPUT"
 
       - name: Resolve ECR registry from account and region
         id: ecr_registry
         shell: bash
-        run: echo "value=${{ steps.account.outputs.id }}.dkr.ecr.${{ steps.meta.outputs.aws_region }}.amazonaws.com" >> "$GITHUB_OUTPUT"
+        run: echo "value=${{ steps.account.outputs.id }}.dkr.ecr.${{
+          steps.meta.outputs.aws_region }}.amazonaws.com" >> "$GITHUB_OUTPUT"
 
       - name: Apply vpc
         uses: ./.github/actions/tf-apply-vpc
         with:
           environment: ${{ steps.meta.outputs.environment }}
           aws-region: ${{ steps.meta.outputs.aws_region }}
-          availability-zones: ${{ vars.TF_VAR_availability_zones || '["us-east-1a","us-east-1b"]' }}
+          availability-zones: ${{ vars.TF_VAR_availability_zones ||
+            '["us-east-1a","us-east-1b"]' }}
 
       - name: Apply secrets
         uses: ./.github/actions/tf-apply-secrets
@@ -145,23 +149,27 @@ jobs:
           TF_VAR_gmail_webhook_secret: ${{ secrets.TF_VAR_gmail_webhook_secret }}
           TF_VAR_slack_oauth_client_id: ${{ secrets.TF_VAR_slack_oauth_client_id }}
           TF_VAR_slack_oauth_client_secret: ${{ secrets.TF_VAR_slack_oauth_client_secret }}
+          TF_VAR_langfuse_host: ${{ vars.TF_VAR_langfuse_host || 'https://cloud.langfuse.com' }}
 
       - name: Bootstrap worker ECR repository
         uses: ./.github/actions/tf-apply-root
         with:
           working-directory: infra/worker
-          apply-args: -target=aws_ecr_repository.worker -target=aws_ecr_lifecycle_policy.worker
+          apply-args: -target=aws_ecr_repository.worker
+            -target=aws_ecr_lifecycle_policy.worker
         env:
           TF_VAR_environment: ${{ steps.meta.outputs.environment }}
           TF_VAR_aws_region: ${{ steps.meta.outputs.aws_region }}
           TF_VAR_aws_account_id: ${{ steps.account.outputs.id }}
           TF_VAR_worker_image_uri: ${{ steps.ecr_registry.outputs.value }}/agent-hub/worker:bootstrap
           TF_VAR_gcp_project_id: ${{ vars.TF_VAR_gcp_project_id }}
+          TF_VAR_langfuse_host: ${{ vars.TF_VAR_langfuse_host || 'https://cloud.langfuse.com' }}
+          TF_VAR_langfuse_public_key: ${{ secrets.TF_VAR_langfuse_public_key }}
+          TF_VAR_langfuse_secret_key: ${{ secrets.TF_VAR_langfuse_secret_key }}
           TF_VAR_gmail_pubsub_topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
           TF_VAR_ecr_registry: ${{ steps.ecr_registry.outputs.value }}
 
       - name: Apply agents/incident-triage
-        if: vars.DEPLOY_PUSH_AGENT == 'true'
         uses: ./.github/actions/tf-apply-root
         with:
           working-directory: infra/agents/incident-triage
@@ -177,15 +185,11 @@ jobs:
         id: outputs
         shell: bash
         env:
-          DEPLOY_PUSH_AGENT: ${{ vars.DEPLOY_PUSH_AGENT }}
         run: |
           hub_repo=$(cd infra/hub && terraform output -raw ecr_repository_name)
           worker_repo=$(cd infra/worker && terraform output -raw ecr_repository_name)
 
-          incident_triage_agent_repo=""
-          if [ "$DEPLOY_PUSH_AGENT" = "true" ]; then
-            incident_triage_agent_repo=$(cd infra/agents/incident-triage && terraform output -raw ecr_repository_name)
-          fi
+          incident_triage_agent_repo=$(cd infra/agents/incident-triage && terraform output -raw ecr_repository_name)
 
           echo "ecr_repository_hub=$hub_repo" >> "$GITHUB_OUTPUT"
           echo "ecr_repository_worker=$worker_repo" >> "$GITHUB_OUTPUT"
@@ -258,7 +262,8 @@ jobs:
           environment: ${{ needs.provision.outputs.environment }}
           aws-region: ${{ env.AWS_REGION }}
           aws-account-id: ${{ env.AWS_ACCOUNT_ID }}
-          hub-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_HUB }}:${{ github.sha }}
+          hub-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_HUB }}:${{
+            github.sha }}
           worker-role-arn: ""
           frontend-url: ${{ vars.TF_VAR_frontend_url }}
           gmail-pubsub-topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
@@ -268,6 +273,7 @@ jobs:
           gmail-webhook-secret: ${{ secrets.TF_VAR_gmail_webhook_secret }}
           slack-oauth-client-id: ${{ secrets.TF_VAR_slack_oauth_client_id }}
           slack-oauth-client-secret: ${{ secrets.TF_VAR_slack_oauth_client_secret }}
+          langfuse-host: ${{ vars.TF_VAR_langfuse_host || 'https://cloud.langfuse.com' }}
 
       - name: Apply worker
         uses: ./.github/actions/tf-apply-worker
@@ -275,16 +281,21 @@ jobs:
           environment: ${{ needs.provision.outputs.environment }}
           aws-region: ${{ env.AWS_REGION }}
           aws-account-id: ${{ env.AWS_ACCOUNT_ID }}
-          worker-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_WORKER }}:${{ github.sha }}
+          worker-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_WORKER }}:${{
+            github.sha }}
           gcp-project-id: ${{ vars.TF_VAR_gcp_project_id }}
           gmail-pubsub-topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
           ecr-registry: ${{ env.ECR_REGISTRY }}
+          langfuse-host: ${{ vars.TF_VAR_langfuse_host || 'https://cloud.langfuse.com' }}
+          langfuse-public-key: ${{ secrets.TF_VAR_langfuse_public_key }}
+          langfuse-secret-key: ${{ secrets.TF_VAR_langfuse_secret_key }}
 
       - name: Read worker role ARN
         id: worker_role
         shell: bash
         working-directory: infra/worker
-        run: echo "arn=$(terraform output -raw worker_task_role_arn)" >> "$GITHUB_OUTPUT"
+        run: echo "arn=$(terraform output -raw worker_task_role_arn)" >>
+          "$GITHUB_OUTPUT"
 
       - name: Apply hub (with worker SQS policy)
         uses: ./.github/actions/tf-apply-hub
@@ -292,7 +303,8 @@ jobs:
           environment: ${{ needs.provision.outputs.environment }}
           aws-region: ${{ env.AWS_REGION }}
           aws-account-id: ${{ env.AWS_ACCOUNT_ID }}
-          hub-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_HUB }}:${{ github.sha }}
+          hub-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_HUB }}:${{
+            github.sha }}
           worker-role-arn: ${{ steps.worker_role.outputs.arn }}
           frontend-url: ${{ vars.TF_VAR_frontend_url }}
           gmail-pubsub-topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
@@ -302,6 +314,7 @@ jobs:
           gmail-webhook-secret: ${{ secrets.TF_VAR_gmail_webhook_secret }}
           slack-oauth-client-id: ${{ secrets.TF_VAR_slack_oauth_client_id }}
           slack-oauth-client-secret: ${{ secrets.TF_VAR_slack_oauth_client_secret }}
+          langfuse-host: ${{ vars.TF_VAR_langfuse_host || 'https://cloud.langfuse.com' }}
 
       - name: Read deployment targets
         shell: bash
@@ -313,7 +326,8 @@ jobs:
 
       - name: Roll out hub App Runner
         shell: bash
-        run: aws apprunner start-deployment --service-arn "$HUB_SERVICE_ARN" --no-cli-pager
+        run: aws apprunner start-deployment --service-arn "$HUB_SERVICE_ARN"
+          --no-cli-pager
 
       - name: Roll out worker ECS service
         shell: bash

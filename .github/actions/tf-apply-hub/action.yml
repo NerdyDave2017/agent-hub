@@ -40,6 +40,10 @@ inputs:
   slack-oauth-client-secret:
     required: true
     description: Slack OAuth client secret.
+  langfuse-host:
+    required: false
+    description: Langfuse host.
+    default: "https://cloud.langfuse.com"
 runs:
   using: composite
   steps:
@@ -61,3 +65,4 @@ runs:
         TF_VAR_gmail_webhook_secret: ${{ inputs.gmail-webhook-secret }}
         TF_VAR_slack_oauth_client_id: ${{ inputs.slack-oauth-client-id }}
         TF_VAR_slack_oauth_client_secret: ${{ inputs.slack-oauth-client-secret }}
+        TF_VAR_langfuse_host: ${{ inputs.langfuse-host }}

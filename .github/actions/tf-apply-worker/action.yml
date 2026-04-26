@@ -1,0 +1,54 @@
+name: Apply Worker
+description: Apply infra/worker Terraform root.
+inputs:
+  environment:
+    required: true
+    description: Terraform environment value.
+  aws-region:
+    required: true
+    description: AWS region.
+  aws-account-id:
+    required: true
+    description: AWS account ID.
+  worker-image-uri:
+    required: true
+    description: Full worker image URI used by Terraform.
+  gcp-project-id:
+    required: true
+    description: GCP project ID.
+  gmail-pubsub-topic:
+    required: true
+    description: Gmail pub/sub topic.
+  ecr-registry:
+    required: true
+    description: ECR registry host.
+  langfuse-host:
+    required: false
+    description: Langfuse host.
+    default: "https://cloud.langfuse.com"
+  langfuse-public-key:
+    required: false
+    description: Langfuse public key.
+    default: ""
+  langfuse-secret-key:
+    required: false
+    description: Langfuse secret key.
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Apply worker root
+      uses: ./.github/actions/tf-apply-root
+      with:
+        working-directory: infra/worker
+      env:
+        TF_VAR_environment: ${{ inputs.environment }}
+        TF_VAR_aws_region: ${{ inputs.aws-region }}
+        TF_VAR_aws_account_id: ${{ inputs.aws-account-id }}
+        TF_VAR_worker_image_uri: ${{ inputs.worker-image-uri }}
+        TF_VAR_gcp_project_id: ${{ inputs.gcp-project-id }}
+        TF_VAR_gmail_pubsub_topic: ${{ inputs.gmail-pubsub-topic }}
+        TF_VAR_ecr_registry: ${{ inputs.ecr-registry }}
+        TF_VAR_langfuse_host: ${{ inputs.langfuse-host }}
+        TF_VAR_langfuse_public_key: ${{ inputs.langfuse-public-key }}
+        TF_VAR_langfuse_secret_key: ${{ inputs.langfuse-secret-key }}
