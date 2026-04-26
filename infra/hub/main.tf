@@ -125,6 +125,7 @@ resource "aws_iam_role_policy" "hub" {
         Resource = [
           "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${local.project}/${local.environment}/tenant/*",
           data.terraform_remote_state.secrets.outputs.internal_service_token_arn,
+          data.terraform_remote_state.rds.outputs.db_secret_arn,
         ]
       },
       {
@@ -161,13 +162,13 @@ module "apprunner" {
   instance_policy_json = "{}"
 
   environment_variables = {
-    ENVIRONMENT        = local.environment
-    AWS_REGION         = var.aws_region
-    SQS_QUEUE_URL      = module.sqs.hub_queue_url
-    HUB_QUEUE_URL      = module.sqs.hub_queue_url
-    FRONTEND_URL       = var.frontend_url
-    GMAIL_PUBSUB_TOPIC = var.gmail_pubsub_topic
-    GCP_PROJECT_ID     = var.gcp_project_id
+    ENVIRONMENT               = local.environment
+    AWS_REGION                = var.aws_region
+    SQS_QUEUE_URL             = module.sqs.hub_queue_url
+    HUB_QUEUE_URL             = module.sqs.hub_queue_url
+    FRONTEND_URL              = var.frontend_url
+    GMAIL_PUBSUB_TOPIC        = var.gmail_pubsub_topic
+    GCP_PROJECT_ID            = var.gcp_project_id
     GMAIL_OAUTH_CLIENT_ID     = var.gmail_oauth_client_id
     GMAIL_OAUTH_CLIENT_SECRET = var.gmail_oauth_client_secret
     SLACK_OAUTH_CLIENT_ID     = var.slack_oauth_client_id
@@ -177,8 +178,8 @@ module "apprunner" {
   }
 
   environment_secrets = {
-    DATABASE_URL              = data.terraform_remote_state.rds.outputs.db_secret_arn
-    INTERNAL_SERVICE_TOKEN    = data.terraform_remote_state.secrets.outputs.internal_service_token_arn
+    DATABASE_URL           = data.terraform_remote_state.rds.outputs.db_secret_arn
+    INTERNAL_SERVICE_TOKEN = data.terraform_remote_state.secrets.outputs.internal_service_token_arn
   }
 
   depends_on = [aws_iam_role_policy.hub]
