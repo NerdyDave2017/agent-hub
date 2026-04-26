@@ -61,7 +61,9 @@ The canonical Pydantic model (serialize with `model_dump(mode="json")`) is [`pac
 
 So: **hub → main queue → worker** is the happy path. **Main queue → DLQ** is AWS’s safety net for “this message is poison or the code is broken,” so one bad job does not block the queue forever. In ops you inspect the DLQ (replay, fix data, discard); the normal worker process still only **polls the main queue** unless you deliberately add a second consumer for DLQ inspection.
 
-**Terraform + Makefile (source of truth)** — Queues, IAM task-role shapes, and a few Secrets Manager placeholders are defined in [`infra/localstack/`](infra/localstack/). From the repo root:
+**AWS worker (ECS + EventBridge)** — Production worker stack lives in [`infra/worker/`](infra/worker/) (`modules/ecs-worker` + scheduled rules in `main.tf`). See [`docs/terraform-infra-instructions.md`](docs/terraform-infra-instructions.md), [`infra/worker/README.md`](infra/worker/README.md), and [`docs/deployment-and-dashboard-instructions.md`](docs/deployment-and-dashboard-instructions.md) §7.3.
+
+**Terraform + Makefile (source of truth)** — Queues (`modules/sqs`), secrets (`modules/secrets`), and IAM (App Runner trust for hub, ECS for worker/agent) are composed in [`infra/localstack/`](infra/localstack/). Full layout: [`infra/README.md`](infra/README.md). From the repo root:
 
 ```bash
 make local-up          # postgres + localstack
