@@ -12,10 +12,12 @@ from agent_hub_core.domain.enums import IncidentSeverity, IncidentType
 
 
 class TriageState(BaseModel):
+    """Graph state; ``langfuse_trace_id`` is set at run start when Langfuse callbacks are active."""
+
     message_id: str
     tenant_id: str
     agent_id: str
-    langfuse_trace_id: str = ""
+    langfuse_trace_id: str = Field(default="", description="Langfuse root trace id when tracing is on.")
     raw_email: dict = Field(default_factory=dict)
     incident_type: IncidentType | None = None
     severity: IncidentSeverity | None = None

@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import uuid
 from contextlib import asynccontextmanager, suppress
 
@@ -75,6 +76,15 @@ async def lifespan(app: FastAPI):
             agent_id=settings.agent_id or None,
         )
         raise
+
+    # Langfuse SDK v3+ reads ``LANGFUSE_*`` from the process environment. Hydrate from resolved
+    # settings when unset so ``CallbackHandler(public_key=..., trace_context=...)`` can export spans.
+    if settings.langfuse_public_key.strip():
+        os.environ.setdefault("LANGFUSE_PUBLIC_KEY", settings.langfuse_public_key.strip())
+    if settings.langfuse_secret_key.strip():
+        os.environ.setdefault("LANGFUSE_SECRET_KEY", settings.langfuse_secret_key.strip())
+    if settings.langfuse_host.strip():
+        os.environ.setdefault("LANGFUSE_BASE_URL", settings.langfuse_host.strip().rstrip("/"))
 
     app.state.session_factory = None
     app.state.checkpoint_pool = None

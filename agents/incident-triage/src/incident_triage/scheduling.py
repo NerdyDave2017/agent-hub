@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 
 from fastapi import FastAPI
 
@@ -24,14 +25,17 @@ async def invoke_graph_run(app: FastAPI, message_id: str) -> None:
     s = get_settings()
     tid = thread_id_for_message(message_id)
     callbacks: list = []
+    # Pre-generated id matches Langfuse root trace (``CallbackHandler(trace_context=...)``) so
+    # ``tool_call_events.trace_id`` and ``incidents.langfuse_trace_id`` align with the Langfuse UI.
+    langfuse_trace_id = ""
     if s.langfuse_public_key.strip() and s.langfuse_secret_key.strip():
         from langfuse.langchain import CallbackHandler
 
+        langfuse_trace_id = uuid.uuid4().hex
         callbacks.append(
             CallbackHandler(
                 public_key=s.langfuse_public_key.strip(),
-                secret_key=s.langfuse_secret_key.strip(),
-                host=(s.langfuse_host or "https://cloud.langfuse.com").strip(),
+                trace_context={"trace_id": langfuse_trace_id},
             )
         )
     config: dict = {
@@ -50,6 +54,7 @@ async def invoke_graph_run(app: FastAPI, message_id: str) -> None:
                 message_id=message_id,
                 tenant_id=s.tenant_id or "local",
                 agent_id=s.agent_id or "local",
+                langfuse_trace_id=langfuse_trace_id,
             ),
             config=config,
         )

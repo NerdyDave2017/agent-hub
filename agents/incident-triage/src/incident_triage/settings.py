@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 import boto3
-from pydantic import Field, PrivateAttr, field_validator
+from pydantic import AliasChoices, Field, PrivateAttr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -44,9 +44,18 @@ class Settings(BaseSettings):
     )
     slack_ops_channel: str = Field(default="#ops-alerts", validation_alias="SLACK_OPS_CHANNEL")
 
-    gmail_secret_arn: str = Field(default="", validation_alias="GMAIL_SECRET_ARN")
-    slack_secret_arn: str = Field(default="", validation_alias="SLACK_SECRET_ARN")
-    hub_token_secret_arn: str = Field(default="", validation_alias="HUB_TOKEN_SECRET_ARN")
+    gmail_secret_arn: str = Field(
+        default="",
+        validation_alias=AliasChoices("GMAIL_SECRET_ARN", "GMAIL_CREDENTIALS_ARN"),
+    )
+    slack_secret_arn: str = Field(
+        default="",
+        validation_alias=AliasChoices("SLACK_SECRET_ARN", "SLACK_TOKEN_ARN"),
+    )
+    hub_token_secret_arn: str = Field(
+        default="",
+        validation_alias=AliasChoices("HUB_TOKEN_SECRET_ARN", "HUB_SERVICE_TOKEN_ARN"),
+    )
     langfuse_secret_arn: str = Field(default="", validation_alias="LANGFUSE_SECRET_ARN")
     database_secret_arn: str = Field(default="", validation_alias="DATABASE_SECRET_ARN")
     openai_secret_arn: str = Field(default="", validation_alias="OPENAI_SECRET_ARN")
