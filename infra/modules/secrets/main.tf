@@ -74,9 +74,24 @@ resource "aws_secretsmanager_secret" "langfuse" {
   tags                    = merge(local.default_tags, { Name = "${var.project}-${var.environment}-langfuse-creds" })
 }
 
+resource "random_password" "internal_service_token" {
+  length  = 48
+  special = false
+}
+
 resource "aws_secretsmanager_secret" "internal_service_token" {
   name                    = "${var.project}/${var.environment}/internal/service-token"
   kms_key_id              = aws_kms_key.main.arn
   recovery_window_in_days = 7
   tags                    = merge(local.default_tags, { Name = "${var.project}-${var.environment}-service-token" })
+}
+
+# App Runner / ECS require AWSCURRENT; the bare secret resource has no version until this exists.
+resource "aws_secretsmanager_secret_version" "internal_service_token" {
+  secret_id     = aws_secretsmanager_secret.internal_service_token.id
+  secret_string = random_password.internal_service_token.result
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
 }
