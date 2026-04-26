@@ -1,5 +1,5 @@
 name: Terraform Apply Root
-description: Run terraform init and apply in a root directory.
+description: Install Terraform, then run terraform init and apply in a root directory.
 inputs:
   working-directory:
     description: Terraform root directory (e.g. infra/vpc)
@@ -11,6 +11,11 @@ inputs:
 runs:
   using: composite
   steps:
+    - uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: "1.9.0"
+        terraform_wrapper: false
+
     - name: Terraform init
       shell: bash
       working-directory: ${{ inputs.working-directory }}
