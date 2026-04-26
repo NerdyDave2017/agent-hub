@@ -7,6 +7,7 @@ Poll loop stays here; job semantics live under ``worker.handlers`` (registry + p
 from __future__ import annotations
 
 import asyncio
+import json
 from contextlib import suppress
 
 from pydantic import ValidationError
@@ -19,6 +20,7 @@ from agent_hub_core.messaging.envelope import JobQueueEnvelope
 from agent_hub_core.observability.logging import configure_logging, get_logger
 
 from worker.handlers.registry import handler_for_job_type
+from worker.messaging.metrics_schedule import enqueue_metrics_rollup_for_previous_hour
 from worker.queue.sqs_receive import delete_message, receive_long_poll
 
 log = get_logger(__name__)
@@ -74,6 +76,28 @@ async def _gmail_renewal_scheduler_loop() -> None:
         await asyncio.sleep(interval)
 
 
+async def _metrics_rollup_scheduler_loop() -> None:
+    """Periodically enqueue ``metrics_rollup`` for each active agent (previous UTC hour bucket)."""
+    while True:
+        s = get_settings()
+        interval = s.metrics_rollup_scheduler_seconds
+        if interval <= 0:
+            return
+        try:
+            factory = get_session_factory(s)
+            async with factory() as session:
+                n = await enqueue_metrics_rollup_for_previous_hour(session)
+                log.info("metrics_rollup_scheduler_tick", jobs_enqueued=n)
+        except Exception:
+            log.exception("metrics_rollup_scheduler_tick_failed")
+
+        s = get_settings()
+        interval = s.metrics_rollup_scheduler_seconds
+        if interval <= 0:
+            return
+        await asyncio.sleep(interval)
+
+
 async def _verify_database_connectivity() -> None:
     """Prove the worker can reach the same Postgres the hub uses (compose-friendly)."""
     engine = get_engine()
@@ -103,6 +127,31 @@ async def _handle_raw_message(settings: Settings, raw: dict[str, object]) -> Non
             phase="sqs_malformed",
         )
         return
+
+    # EventBridge (or ops) → SQS tick: fan out metrics_rollup jobs without a JobQueueEnvelope.
+    try:
+        tick = json.loads(body)
+    except json.JSONDecodeError:
+        tick = None
+    if isinstance(tick, dict) and tick.get("kind") == "scheduled_metrics_rollup":
+        try:
+            factory = get_session_factory(settings)
+            async with factory() as session:
+                n = await enqueue_metrics_rollup_for_previous_hour(session)
+            await asyncio.to_thread(delete_message, settings=settings, receipt_handle=receipt)
+            log.info(
+                "scheduled_metrics_rollup_tick_ok",
+                sqs_message_id=message_id,
+                jobs_enqueued=n,
+                source=tick.get("source"),
+            )
+        except Exception:
+            log.exception(
+                "scheduled_metrics_rollup_tick_failed",
+                sqs_message_id=message_id,
+            )
+        return
+
     try:
         envelope = JobQueueEnvelope.model_validate_json(body)
     except ValidationError as exc:
@@ -186,6 +235,9 @@ async def run() -> None:
     renew_task: asyncio.Task[None] | None = None
     if settings.gmail_renewal_scheduler_seconds > 0:
         renew_task = asyncio.create_task(_gmail_renewal_scheduler_loop())
+    rollup_task: asyncio.Task[None] | None = None
+    if settings.metrics_rollup_scheduler_seconds > 0:
+        rollup_task = asyncio.create_task(_metrics_rollup_scheduler_loop())
     try:
         await _verify_database_connectivity()
         while True:
@@ -201,5 +253,9 @@ async def run() -> None:
             renew_task.cancel()
             with suppress(asyncio.CancelledError):
                 await renew_task
+        if rollup_task is not None:
+            rollup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await rollup_task
         await dispose_engine()
         log.info("worker_stopped", phase="shutdown")

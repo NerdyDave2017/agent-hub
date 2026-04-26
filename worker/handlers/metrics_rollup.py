@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_hub_core.config.settings import get_settings
 from agent_hub_core.db.job_transitions import claim_job_for_worker, complete_job_success, fail_job_while_running
 from agent_hub_core.db.models import Agent, Job, MetricSnapshot
 from agent_hub_core.domain.enums import JobStatus
@@ -15,6 +16,7 @@ from agent_hub_core.observability.logging import get_logger
 
 from worker.handlers._idempotency import is_terminal_job
 from worker.handlers.base import AbstractJobHandler
+from worker.handlers.langfuse_public_metrics import fetch_langfuse_observation_totals
 
 log = get_logger(__name__)
 
@@ -49,9 +51,11 @@ class MetricsRollupHandler(AbstractJobHandler):
         window_end = now.replace(minute=0, second=0, microsecond=0)
         window_start = window_end - timedelta(hours=1)
         if isinstance(payload.get("window_start"), str):
-            window_start = datetime.fromisoformat(payload["window_start"])
+            ws = str(payload["window_start"]).replace("Z", "+00:00")
+            window_start = datetime.fromisoformat(ws)
         if isinstance(payload.get("window_end"), str):
-            window_end = datetime.fromisoformat(payload["window_end"])
+            we = str(payload["window_end"]).replace("Z", "+00:00")
+            window_end = datetime.fromisoformat(we)
 
         agent = await session.get(Agent, job.agent_id)
         if agent is None or agent.tenant_id != job.tenant_id:
@@ -134,6 +138,15 @@ class MetricsRollupHandler(AbstractJobHandler):
             "avg_confidence": avg_conf,
             "low_confidence_rate": low_conf / max(incident_count, 1),
         }
+
+        lf = await fetch_langfuse_observation_totals(
+            get_settings(),
+            tenant_id=job.tenant_id,
+            window_start=window_start,
+            window_end=window_end,
+        )
+        if lf is not None:
+            metrics["langfuse"] = lf
 
         existing = await session.scalar(
             select(MetricSnapshot).where(

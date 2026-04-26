@@ -14,13 +14,18 @@ import boto3
 
 from agent_hub_core.config.settings import Settings
 
+from worker.handlers.aws._boto import boto_client_kwargs
+
 
 class ECSAdapter:
     def __init__(self, settings: Settings) -> None:
-        kwargs: dict[str, Any] = {"region_name": settings.aws_region}
-        if settings.aws_endpoint_url:
-            kwargs["endpoint_url"] = settings.aws_endpoint_url
-        if settings.aws_access_key_id and settings.aws_secret_access_key:
-            kwargs["aws_access_key_id"] = settings.aws_access_key_id
-            kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
-        self._client = boto3.client("ecs", **kwargs)
+        self._client = boto3.client("ecs", **boto_client_kwargs(settings))
+
+    def describe_service(self, *, cluster: str, service: str) -> dict[str, Any]:
+        return self._client.describe_services(cluster=cluster, services=[service])
+
+    def update_service_desired_count(self, *, cluster: str, service: str, desired: int) -> None:
+        self._client.update_service(cluster=cluster, service=service, desiredCount=desired)
+
+    def delete_service(self, *, cluster: str, service: str, force: bool = False) -> None:
+        self._client.delete_service(cluster=cluster, service=service, force=force)
