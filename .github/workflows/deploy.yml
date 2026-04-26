@@ -184,7 +184,6 @@ jobs:
       - name: Export Terraform outputs for downstream stages
         id: outputs
         shell: bash
-        env:
         run: |
           hub_repo=$(cd infra/hub && terraform output -raw ecr_repository_name)
           worker_repo=$(cd infra/worker && terraform output -raw ecr_repository_name)

@@ -1,0 +1,122 @@
+# Unified checks for the uv workspace (hub, worker, incident-triage, shared kernel).
+# Replaces separate backend/worker workflows so tests run once per commit.
+name: CI
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - "backend/**"
+      - "worker/**"
+      - "agents/incident-triage/**"
+      - "packages/agent-hub-core/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "docker-compose.yml"
+      - "backend/Dockerfile"
+      - "worker/Dockerfile"
+      - "agents/incident-triage/Dockerfile"
+      - ".github/workflows/ci.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - "worker/**"
+      - "agents/incident-triage/**"
+      - "packages/agent-hub-core/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - "docker-compose.yml"
+      - "backend/Dockerfile"
+      - "worker/Dockerfile"
+      - "agents/incident-triage/Dockerfile"
+      - ".github/workflows/ci.yml"
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    name: Python (uv + pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Sync workspace (with dev tools)
+        run: uv sync --frozen --group dev
+
+      - name: Import shared kernel
+        run: uv run --package agent-hub-core python -c "import
+          agent_hub_core.config.settings; import agent_hub_core.db.models"
+
+      - name: Import hub application
+        run: uv run --package agent-hub-backend --directory backend python -c "import
+          main; import apis.agents; import apis.jobs; import apis.tenants"
+
+      - name: Import worker
+        run: uv run --package agent-hub-worker python -c "import worker.main; import
+          worker.handlers.registry"
+
+      - name: Import incident-triage agent
+        run: uv run --package agent-hub-incident-triage python -c "import
+          incident_triage.main"
+
+      - name: Byte-compile hub
+        run: uv run --package agent-hub-backend --directory backend python -m compileall
+          -q apis services main.py
+
+      - name: Byte-compile worker
+        run: uv run --package agent-hub-worker python -m compileall -q worker
+
+      - name: Run tests
+        run: uv run --group dev pytest -q
+
+  docker:
+    name: Docker (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    needs: python
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: hub
+            file: backend/Dockerfile
+          - name: worker
+            file: worker/Dockerfile
+          - name: incident-triage
+            file: agents/incident-triage/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          push: false
+          tags: agent-hub/${{ matrix.name }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  compose:
+    name: Docker Compose config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate compose file
+        run: docker compose config --quiet

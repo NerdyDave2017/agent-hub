@@ -1,0 +1,19 @@
+name: Apply Secrets
+description: Apply infra/secrets Terraform root.
+inputs:
+  environment:
+    required: true
+    description: Terraform environment value.
+  aws-region:
+    required: true
+    description: AWS region.
+runs:
+  using: composite
+  steps:
+    - name: Apply secrets root
+      uses: ./.github/actions/tf-apply-root
+      with:
+        working-directory: infra/secrets
+      env:
+        TF_VAR_environment: ${{ inputs.environment }}
+        TF_VAR_aws_region: ${{ inputs.aws-region }}

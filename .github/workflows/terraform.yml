@@ -1,0 +1,115 @@
+# IaC checks + optional AWS OIDC smoke test (no long-lived keys).
+# Bootstrap: apply infra/ci-oidc once with human credentials; set secret AWS_ROLE_TO_ASSUME.
+#
+# Production apply order (worker needs hub queue URL, VPC connector from vpc, secrets/RDS, then hub
+# must be applied again with worker_task_role_arn for SQS ReceiveMessage): see infra/DEPLOYMENT-CHECKLIST.md
+# and workflow_dispatch in .github/workflows/terraform-apply.yml.
+#
+# Destroy order: .github/workflows/destroy.yml
+name: Terraform
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform.yml"
+  pull_request:
+    paths:
+      - "infra/**"
+      - ".github/workflows/terraform.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: terraform-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  TF_IN_AUTOMATION: true
+  TF_INPUT: "false"
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive infra
+
+  validate:
+    name: Validate (${{ matrix.dir }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Order matches recommended apply sequence (validate is independent per dir).
+        dir:
+          - infra/ci-oidc
+          - infra/localstack
+          - infra/vpc
+          - infra/secrets
+          - infra/rds
+          - infra/hub
+          - infra/worker
+          - infra/agents/incident-triage
+    defaults:
+      run:
+        working-directory: ${{ matrix.dir }}
+    env:
+      TF_VAR_environment: ci
+      TF_VAR_aws_account_id: "000000000000"
+      TF_VAR_availability_zones: "[\"us-east-1a\",\"us-east-1b\"]"
+      TF_VAR_db_password: ci-validate-not-used
+      TF_VAR_hub_image_uri: "000000000000.dkr.ecr.us-east-1.amazonaws.com/agent-hub/hub:validate"
+      TF_VAR_worker_image_uri: "000000000000.dkr.ecr.us-east-1.amazonaws.com/agent-hub/worker:validate"
+      TF_VAR_frontend_url: https://example.com
+      TF_VAR_gmail_pubsub_topic: projects/ci/topics/t
+      TF_VAR_gcp_project_id: ci-project
+      TF_VAR_gmail_oauth_client_id_arn: arn:aws:secretsmanager:us-east-1:000000000000:secret:agent-hub/ci/gmail/oauth-client-id
+      TF_VAR_gmail_oauth_client_secret_arn: arn:aws:secretsmanager:us-east-1:000000000000:secret:agent-hub/ci/gmail/oauth-client-secret
+      TF_VAR_gmail_webhook_secret_arn: arn:aws:secretsmanager:us-east-1:000000000000:secret:agent-hub/ci/gmail/webhook-secret
+      TF_VAR_slack_oauth_client_id_arn: arn:aws:secretsmanager:us-east-1:000000000000:secret:agent-hub/ci/slack/oauth-client-id
+      TF_VAR_slack_oauth_client_secret_arn: arn:aws:secretsmanager:us-east-1:000000000000:secret:agent-hub/ci/slack/oauth-client-secret
+      TF_VAR_ecr_registry: "000000000000.dkr.ecr.us-east-1.amazonaws.com"
+      TF_VAR_aws_region: us-east-1
+      TF_VAR_github_organization: ci-org
+      TF_VAR_github_repository: ci-repo
+      TF_VAR_staging_tenant_id: tenant-ci
+      TF_VAR_staging_agent_id: agent-ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.0"
+          terraform_wrapper: false
+
+      - name: Terraform init (no remote backend)
+        run: terraform init -backend=false -input=false
+
+      - name: Terraform validate
+        run: terraform validate
+
+  # Set repository variable RUN_AWS_OIDC_SMOKE = true to verify OIDC after bootstrapping ci-oidc.
+  oidc-smoke:
+    name: AWS OIDC smoke
+    runs-on: ubuntu-latest
+    if: vars.RUN_AWS_OIDC_SMOKE == 'true'
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Verify role
+        run: aws sts get-caller-identity

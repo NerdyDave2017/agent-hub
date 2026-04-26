@@ -1,0 +1,22 @@
+name: Terraform Apply Root
+description: Run terraform init and apply in a root directory.
+inputs:
+  working-directory:
+    description: Terraform root directory (e.g. infra/vpc)
+    required: true
+  apply-args:
+    description: Additional args appended to terraform apply (e.g. -target=...)
+    required: false
+    default: ""
+runs:
+  using: composite
+  steps:
+    - name: Terraform init
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: terraform init -input=false
+
+    - name: Terraform apply
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: terraform apply -auto-approve ${{ inputs.apply-args }}

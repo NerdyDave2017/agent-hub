@@ -1,0 +1,35 @@
+name: Build and Push Incident Triage
+description: Build and push incident-triage image to ECR.
+inputs:
+  aws-region:
+    required: true
+    description: AWS region.
+  aws-account-id:
+    required: true
+    description: AWS account ID.
+  repository:
+    required: true
+    description: ECR repository path without registry.
+  image-tag:
+    required: true
+    description: Immutable image tag (normally github.sha).
+runs:
+  using: composite
+  steps:
+    - name: Login to ECR
+      uses: aws-actions/amazon-ecr-login@v2
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Build and push incident-triage image
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: agents/incident-triage/Dockerfile
+        push: true
+        tags: |
+          ${{ inputs.aws-account-id }}.dkr.ecr.${{ inputs.aws-region }}.amazonaws.com/${{ inputs.repository }}:${{ inputs.image-tag }}
+          ${{ inputs.aws-account-id }}.dkr.ecr.${{ inputs.aws-region }}.amazonaws.com/${{ inputs.repository }}:latest
+        cache-from: type=gha
+        cache-to: type=gha,mode=max

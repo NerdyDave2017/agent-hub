@@ -1,0 +1,23 @@
+name: Apply VPC
+description: Apply infra/vpc Terraform root.
+inputs:
+  environment:
+    required: true
+    description: Terraform environment value.
+  aws-region:
+    required: true
+    description: AWS region.
+  availability-zones:
+    required: true
+    description: JSON list of AZs.
+runs:
+  using: composite
+  steps:
+    - name: Apply vpc root
+      uses: ./.github/actions/tf-apply-root
+      with:
+        working-directory: infra/vpc
+      env:
+        TF_VAR_environment: ${{ inputs.environment }}
+        TF_VAR_aws_region: ${{ inputs.aws-region }}
+        TF_VAR_availability_zones: ${{ inputs.availability-zones }}
