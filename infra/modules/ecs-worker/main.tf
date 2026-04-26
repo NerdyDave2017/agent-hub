@@ -3,26 +3,21 @@ locals {
     Project     = var.project
     Environment = var.environment
   }
-  # App Runner CreateService validates iam:PassRole per role; bind each ARN to the service
-  # principal AWS uses for that role (wildcard Resource + multi-value PassedToService is brittle).
+  # PassRole only on the two agent roles Terraform owns. Omit iam:PassedToService: App Runner's
+  # CreateService can evaluate PassRole with a principal that does not match tasks.* / build.*
+  # literally, which caused AccessDenied even when trust policies were correct.
   apprunner_pass_role_statements = concat(
     trimspace(var.agent_instance_role_arn) != "" ? [{
       Sid      = "IAMPassAgentInstanceForAppRunner"
       Effect   = "Allow"
       Action   = "iam:PassRole"
       Resource = var.agent_instance_role_arn
-      Condition = {
-        StringEquals = { "iam:PassedToService" = "tasks.apprunner.amazonaws.com" }
-      }
     }] : [],
     trimspace(var.agent_ecr_access_role_arn) != "" ? [{
       Sid      = "IAMPassAgentEcrAccessForAppRunner"
       Effect   = "Allow"
       Action   = "iam:PassRole"
       Resource = var.agent_ecr_access_role_arn
-      Condition = {
-        StringEquals = { "iam:PassedToService" = "build.apprunner.amazonaws.com" }
-      }
     }] : [],
   )
 }
