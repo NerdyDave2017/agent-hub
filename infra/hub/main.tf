@@ -125,6 +125,7 @@ resource "aws_iam_role_policy" "hub" {
         Resource = [
           "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${local.project}/${local.environment}/tenant/*",
           data.terraform_remote_state.secrets.outputs.internal_service_token_arn,
+          data.terraform_remote_state.secrets.outputs.jwt_secret_key_arn,
           data.terraform_remote_state.rds.outputs.db_secret_arn,
         ]
       },
@@ -180,6 +181,7 @@ module "apprunner" {
   environment_secrets = {
     DATABASE_URL           = data.terraform_remote_state.rds.outputs.db_secret_arn
     INTERNAL_SERVICE_TOKEN = data.terraform_remote_state.secrets.outputs.internal_service_token_arn
+    JWT_SECRET_KEY         = data.terraform_remote_state.secrets.outputs.jwt_secret_key_arn
   }
 
   depends_on = [aws_iam_role_policy.hub]

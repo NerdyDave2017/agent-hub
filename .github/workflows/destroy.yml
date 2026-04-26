@@ -17,14 +17,16 @@ on:
   workflow_dispatch:
     inputs:
       environment:
-        description: "Terraform environment name (must match state, e.g. staging, production)"
+        description: "Terraform environment name (must match state, e.g. staging,
+          production)"
         required: true
         type: choice
         options:
           - staging
           - production
       confirmation:
-        description: "Must be exactly DESTROY-<ENVIRONMENT> in upper case (e.g. DESTROY-STAGING)"
+        description: "Must be exactly DESTROY-<ENVIRONMENT> in upper case (e.g.
+          DESTROY-STAGING)"
         required: true
         type: string
 

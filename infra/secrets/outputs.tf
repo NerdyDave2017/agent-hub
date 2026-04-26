@@ -13,3 +13,7 @@ output "langfuse_secret_arn" {
 output "internal_service_token_arn" {
   value = module.secrets.internal_service_token_arn
 }
+
+output "jwt_secret_key_arn" {
+  value = module.secrets.jwt_secret_key_arn
+}

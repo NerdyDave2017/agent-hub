@@ -95,3 +95,24 @@ resource "aws_secretsmanager_secret_version" "internal_service_token" {
     ignore_changes = [secret_string]
   }
 }
+
+resource "random_password" "jwt_secret_key" {
+  length  = 64
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "jwt_secret_key" {
+  name                    = "${var.project}/${var.environment}/hub/jwt-secret-key"
+  kms_key_id              = aws_kms_key.main.arn
+  recovery_window_in_days = 7
+  tags                    = merge(local.default_tags, { Name = "${var.project}-${var.environment}-hub-jwt-secret" })
+}
+
+resource "aws_secretsmanager_secret_version" "jwt_secret_key" {
+  secret_id     = aws_secretsmanager_secret.jwt_secret_key.id
+  secret_string = random_password.jwt_secret_key.result
+
+  lifecycle {
+    ignore_changes = [secret_string]
+  }
+}
