@@ -31,12 +31,12 @@ class AppRunnerAdapter:
         health_check_path: str = "/health",
         tags: list[dict[str, str]] | None = None,
         runtime_environment_variables: dict[str, str] | None = None,
-        client_token: str | None = None,
     ) -> dict[str, Any]:
         """
-        ``CreateService`` — idempotent when ``client_token`` is stable per logical create.
+        ``CreateService`` for an ECR-backed image.
 
-        See https://docs.aws.amazon.com/apprunner/latest/api/API_CreateService.html
+        App Runner ``CreateService`` does not accept ``ClientToken`` (unlike some other AWS
+        APIs); idempotency is enforced via ``jobs`` / deployment rows and ``ServiceName``.
         """
         img_cfg: dict[str, Any] = {"Port": port}
         if runtime_environment_variables:
@@ -78,8 +78,6 @@ class AppRunnerAdapter:
             }
         if tags:
             body["Tags"] = tags
-        if client_token:
-            body["ClientToken"] = client_token[:64]
         return self._client.create_service(**body)
 
     def describe_service(self, service_arn: str) -> dict[str, Any]:

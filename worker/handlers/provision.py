@@ -273,7 +273,6 @@ class AgentProvisioningHandler(AbstractJobHandler):
                         health_check_path=health_path,
                         tags=tags,
                         runtime_environment_variables=runtime_env,
-                        client_token=str(job.id),
                     )
 
                 create_raw = await asyncio.to_thread(_create)
