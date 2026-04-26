@@ -70,7 +70,7 @@ resource "aws_cloudwatch_metric_alarm" "dlq_depth" {
   period              = 60
   statistic           = "Sum"
   threshold           = 0
-  alarm_description   = "DLQ has messages — worker job failures require investigation"
+  alarm_description   = "DLQ has messages - worker job failures require investigation"
   alarm_actions       = var.alarm_sns_arns
 
   dimensions = {

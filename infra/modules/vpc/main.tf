@@ -165,7 +165,7 @@ resource "aws_apprunner_vpc_connector" "hub" {
 
 resource "aws_security_group" "app_runner_connector" {
   name        = "${var.project}-${var.environment}-app-runner-connector-sg"
-  description = "App Runner VPC Connector — hub outbound to RDS only"
+  description = "App Runner VPC connector - hub outbound to RDS only"
   vpc_id      = aws_vpc.main.id
 
   egress {
@@ -189,7 +189,7 @@ resource "aws_security_group" "app_runner_connector" {
 
 resource "aws_security_group" "worker" {
   name        = "${var.project}-${var.environment}-worker-sg"
-  description = "Worker ECS tasks — no inbound HTTP, outbound to RDS + AWS services"
+  description = "Worker ECS tasks - no inbound HTTP, outbound to RDS and AWS services"
   vpc_id      = aws_vpc.main.id
 
   egress {
@@ -213,7 +213,7 @@ resource "aws_security_group" "worker" {
 
 resource "aws_security_group" "rds" {
   name        = "${var.project}-${var.environment}-rds-sg"
-  description = "RDS Postgres — accepts connections from worker and App Runner connector"
+  description = "RDS Postgres - accepts connections from worker and App Runner connector"
   vpc_id      = aws_vpc.main.id
 
   ingress {
