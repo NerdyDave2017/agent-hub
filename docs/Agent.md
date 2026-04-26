@@ -29,7 +29,7 @@ Align implementation with the full project plan in **[`docs/plan.md`](docs/plan.
 1. **T0 — Local platform** — `docker-compose.yml` proves hub enqueues → worker consumes → DB (or logs then DB); **structured logs** on hub + worker (and agent when added). **No Terraform until T0 passes.**
 2. **Agent wire-up** — `agents/incident-triage` `/health` + minimal run path; document hub→agent vs worker→agent in README.
 3. **Product** — Langfuse (hub + agent), dashboard API, LangGraph HITL (interrupt + resume).
-4. **AWS** — Apply Terraform roots in order: **`infra/backend/`** → **`infra/worker/`** → **`infra/agents/incident-triage/`** (optional **`infra/frontend/`**). Use **`terraform_remote_state`** where worker (or agent) needs backend outputs (e.g. SQS queue URLs).
+4. **AWS** — Apply Terraform roots in order once implemented: shared **`infra/modules/*`** via **`infra/localstack`** (dev only) or prod composition → **`infra/hub/`** (App Runner) → **`infra/worker/`** → **`infra/agents/incident-triage/`** (optional **`infra/frontend/`**). Use **`terraform_remote_state`** (or shared module outputs) where worker needs queue URLs / VPC inputs from the stack that owns SQS.
 5. **CI** — OIDC to AWS; path filters tie **app** and **Terraform** per service (see below).
 
 ---
@@ -51,7 +51,7 @@ Align implementation with the full project plan in **[`docs/plan.md`](docs/plan.
 
 ## Database
 
-- Postgres is a **separate** process: compose service `postgres` locally; **RDS** owned by the **`infra/backend/`** stack (or as you document—hub and worker share one DB for capstone). **`DATABASE_URL`** on hub and worker. **Alembic** via explicit migrate step (Makefile/CI), not uncoordinated startup migrate on every hub replica in prod.
+- Postgres is a **separate** process: compose service `postgres` locally; **RDS** will live under **`infra/modules/rds`** (or a prod root calling it) once wired — hub and worker share one DB for capstone. **`DATABASE_URL`** on hub and worker. **Alembic** via explicit migrate step (Makefile/CI), not uncoordinated startup migrate on every hub replica in prod.
 
 ---
 
@@ -87,11 +87,12 @@ Each deployable owns a **Terraform root** that declares **only** (or primarily) 
 
 | Root | Owns (typical) |
 | --- | --- |
-| **`infra/backend/`** | Hub ECS, hub ECR, ALB listener/TG for hub, **RDS**, **SQS** queues the hub publishes to, hub IAM/secrets/SG; **outputs** for queue URLs (and SG/RDS info worker needs). |
-| **`infra/worker/`** | Worker ECS, worker ECR, worker IAM (SQS consume, DB, optional ECS API), worker SG; **`terraform_remote_state`** → backend for queue URLs etc. |
-| **`infra/agents/incident-triage/`** | Agent ECS, ECR, ALB (or internal access), agent IAM/secrets/SG. |
+| **`infra/localstack/`** | **Development:** emulated SQS (`modules/sqs`), secrets (`modules/secrets`), IAM (hub App Runner trust, worker/agent ECS task roles). |
+| **`infra/hub/`** | **Production hub:** App Runner service, VPC connector, IAM — **not** ECS+ALB (legacy `infra/backend/` removed). |
+| **`infra/worker/`** | Worker ECS Fargate (`modules/ecs-worker`), agent IAM roles, EventBridge → SQS (see `docs/terraform-infra-instructions.md`). |
+| **`infra/agents/incident-triage/`** | Optional on-AWS agent: ECS, Cloud Map, agent IAM/SG (SaaS default remains App Runner from worker provisioner). |
 | **`infra/frontend/`** | Optional: S3/CloudFront, Amplify, etc., when `frontend/` exists. |
-| **`infra/modules/`** | Shared modules only — **no** standalone apply. |
+| **`infra/modules/`** | Shared VPC, RDS, SQS, secrets, ECS cluster — composed by roots; **no** standalone apply. |
 | **`infra/_bootstrap/`** | Optional one-time state bucket + DynamoDB lock. |
 
 Each root: own **state key** in a shared S3 backend + lock table is fine.
@@ -100,12 +101,12 @@ Each root: own **state key** in a shared S3 backend + lock table is fine.
 
 ## CI path filters
 
-- **`backend/**`** or **`infra/backend/**`** → build/push hub + plan/apply **`infra/backend/`**.
+- **`backend/**`** or **`infra/hub/**`** → build/push hub + plan/apply **`infra/hub/`** (when App Runner Terraform is implemented).
 - **`worker/**`** or **`infra/worker/**`** → worker image + **`infra/worker/`**.
 - **`agents/incident-triage/**`** or **`infra/agents/incident-triage/**`** → agent image + **`infra/agents/incident-triage/`**.
 - **`frontend/**`** or **`infra/frontend/**`** → optional frontend + **`infra/frontend/`**.
 
-Apply dependent stacks **after** backend when using `terraform_remote_state` from backend.
+Apply dependent stacks **after** the root that owns shared queues / VPC / RDS when using `terraform_remote_state`.
 
 ---
 
@@ -131,5 +132,5 @@ Apply dependent stacks **after** backend when using `terraform_remote_state` fro
 | Worker | `worker/` |
 | Agent | `agents/incident-triage/` |
 | Local | `docker-compose.yml` |
-| IaC | `infra/backend/`, `infra/worker/`, `infra/agents/incident-triage/`, optional `infra/frontend/` |
+| IaC | `infra/localstack/` (dev), `infra/hub/`, `infra/worker/`, `infra/agents/incident-triage/`, `infra/modules/*`, optional `infra/frontend/` |
 | Docs | `docs/architecture.md` |

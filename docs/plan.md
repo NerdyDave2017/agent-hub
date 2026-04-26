@@ -1,6 +1,6 @@
 ---
 name: Agent hub architecture
-overview: Capstone (~60h)—**local-first** (compose: Postgres + SQS emulator + hub + worker + incident-triage), **structured JSON logging + shared field contract in hub, worker, and agent**, then **per-service Terraform** on AWS (`infra/backend/`, `infra/worker/`, `infra/agents/incident-triage/`, optional `infra/frontend/`; shared `infra/modules/`). Langfuse/HITL, CI, docs. Diagrams stay minimal.
+overview: Capstone (~60h)—**local-first** (compose: Postgres + SQS emulator + hub + worker + incident-triage), **structured JSON logging + shared field contract in hub, worker, and agent**, then **per-service Terraform** on AWS (`infra/hub/`, `infra/worker/`, `infra/agents/incident-triage/`, optional `infra/frontend/`; shared `infra/modules/`; dev emulated AWS in `infra/localstack/`). Langfuse/HITL, CI, docs. Diagrams stay minimal.
 todos:
   - id: layout-monorepo
     content: `docker-compose` local stack first; `backend/`, `worker/`, `agents/incident-triage/` with **structured logging (shared fields)** from T0; **per-service Terraform roots** under `infra/<service>/` (see plan tree); optional `frontend/`, `packages/shared/`; README + architecture.md
@@ -15,13 +15,13 @@ todos:
     content: Standardize Secrets Manager naming + ECS secret refs + IAM task roles; forbid secrets in SQS bodies
     status: pending
   - id: ecs-first-terraform
-    content: **After local T0:** separate Terraform root per deployable — `infra/backend/` (hub ECS/ECR/ALB, RDS, SQS queues hub sends to, hub secrets), `infra/worker/` (worker ECS/ECR, consume IAM, remote_state from backend for queue URLs), `infra/agents/incident-triage/` (agent ECS/ECR/ALB as needed), optional `infra/frontend/`; shared `infra/modules/*` only for DRY; each root own S3 state key; optional `infra/_bootstrap/` for state bucket
+    content: **After local T0:** separate Terraform root per deployable — `infra/hub/` (hub App Runner, VPC connector, hub IAM), `infra/worker/` (worker ECS Fargate, consume IAM, optional EventBridge), `infra/agents/incident-triage/` (optional on-AWS agent ECS/Cloud Map), optional `infra/frontend/`; shared `infra/modules/*` (SQS, secrets, VPC, RDS, ECS cluster); `infra/localstack/` for LocalStack dev; each root own S3 state key; optional `infra/_bootstrap/` for state bucket
     status: pending
   - id: ci-pipelines
-    content: GHA OIDC; build/push `backend/**`, `worker/**`, `agents/incident-triage/**`; **separate** path-triggered Terraform for `infra/backend/**`, `infra/worker/**`, `infra/agents/incident-triage/**`, `infra/frontend/**` (fmt/validate; gated apply in apply order backend → worker → agent when outputs chain)
+    content: GHA OIDC; build/push `backend/**`, `worker/**`, `agents/incident-triage/**`; **separate** path-triggered Terraform for `infra/hub/**`, `infra/worker/**`, `infra/agents/incident-triage/**`, `infra/frontend/**`, `infra/localstack/**` (fmt/validate; gated apply in dependency order when outputs chain)
     status: pending
   - id: architecture-md
-    content: docs/architecture.md — mermaid + sequences + dependency table + repo tree + per-service Terraform map (`infra/backend`, `infra/worker`, `infra/agents/incident-triage`, apply order, remote_state); Langfuse/LangGraph in appendix
+    content: docs/architecture.md — mermaid + sequences + dependency table + repo tree + per-service Terraform map (`infra/hub`, `infra/worker`, `infra/agents/incident-triage`, `infra/localstack`, `infra/modules`, apply order, remote_state); Langfuse/LangGraph in appendix
     status: pending
   - id: observability-aws
     content: **All services** (hub, worker, incident-triage): structured JSON logging (e.g. structlog), shared field contract (`service`, `correlation_id`/`request_id`, `job_id` where applicable, `tenant_id` when known); CloudWatch in AWS; document in README
@@ -121,7 +121,7 @@ The repo today is a stub: [backend/](../backend/) (placeholder modules), [archit
 | Track | Owner focus | Done when |
 | --- | --- | --- |
 | **T0 — Local platform** | `docker-compose`, Postgres, LocalStack SQS+DLQ, **FastAPI hub** enqueue, **worker** consume; **structured JSON logs** in hub + worker (agent when present) with shared `service` / `correlation_id` / `job_id` | `curl` hub → SQS → worker logs + DB update; logs correlate across containers |
-| **T1 — Terraform (per service)** | **`infra/backend/`** then **`infra/worker/`** then **`infra/agents/incident-triage/`** (optional **`infra/frontend/`**); shared VPC/cluster IDs via variables or slim shared bootstrap | Each root `terraform apply` succeeds in order; outputs wired |
+| **T1 — Terraform (per service)** | **`infra/localstack/`** (dev) then **`infra/hub/`** then **`infra/worker/`** then **`infra/agents/incident-triage/`** (optional **`infra/frontend/`**); shared VPC/cluster IDs via `infra/modules/*` or variables | Each root `terraform apply` succeeds in order; outputs wired |
 | **T2 — ECS runtime** | Task defs per stack; ALB rules per service; CloudWatch | Hub, worker, **incident-triage** `/health` on AWS |
 | **T3 — Application vertical** | Alembic models; hub APIs; worker handlers; **incident-triage**; hub→agent | End-to-end on AWS (or hybrid: hub AWS, agent local—document if used) |
 | **T4 — Observability + HITL** | Langfuse + LangGraph in **incident-triage** | Trace + HITL demo |
@@ -141,7 +141,7 @@ The repo today is a stub: [backend/](../backend/) (placeholder modules), [archit
 **Thursday (hours 24–48): “Agent + Langfuse + start Terraform”**
 
 - **24–32h:** Incident-triage **run** path + Langfuse trace; LangGraph HITL thin slice if time.
-- **32–40h:** **Begin Terraform** at **`infra/backend/`** (remote state bootstrap if needed, VPC inputs, RDS, SQS queues, hub ECS/ECR/ALB); then **`infra/worker/`** with `terraform_remote_state` to backend outputs.
+- **32–40h:** **Begin Terraform** at **`infra/localstack/`** (dev) / shared modules, then **`infra/hub/`** (App Runner, VPC connector), **`infra/worker/`** (ECS Fargate), with `terraform_remote_state` or module outputs for queue URLs and VPC inputs.
 - **40–48h:** **`infra/agents/incident-triage/`** apply; GHA build/push all three images; smoke **hub /health** on ALB.
 
 **Friday (hours 48–60+): “AWS harden + present”**
@@ -172,13 +172,13 @@ Lead with **local live demo** (hub → SQS → worker → DB), then **same diagr
 
 ## Target repository layout (tree)
 
-Conventions: **`backend/`** ships the **hub API** image; **`worker/`** ships the **async orchestration + KPI rollup** image; **Capstone:** only **`agents/incident-triage/`** ships a **data-plane** image; additional `agents/*` are **post-capstone**. **`infra/`** uses **one Terraform root per independently deployable service** (`infra/backend/`, `infra/worker/`, `infra/agents/incident-triage/`, optional `infra/frontend/`): each root declares the AWS resources that service needs. Shared DRY blocks live under **`infra/modules/`** (called by multiple roots). Each root uses its **own state key** (same S3 backend bucket + DynamoDB lock table is fine). **`frontend/`** app code is optional until the dashboard exists.
+Conventions: **`backend/`** ships the **hub API** image; **`worker/`** ships the **async orchestration + KPI rollup** image; **Capstone:** only **`agents/incident-triage/`** ships a **data-plane** image; additional `agents/*` are **post-capstone**. **`infra/`** uses **one Terraform root per independently deployable service** (`infra/hub/`, `infra/worker/`, `infra/agents/incident-triage/`, optional `infra/frontend/`, plus **`infra/localstack/`** for dev): each root declares the AWS resources that service needs. Shared DRY blocks live under **`infra/modules/`** (called by multiple roots). Each root uses its **own state key** (same S3 backend bucket + DynamoDB lock table is fine). **`frontend/`** app code is optional until the dashboard exists.
 
 ```text
 agent-hub/
 ├── .github/
 │   └── workflows/
-│       ├── backend.yml              # app: backend/** ; tf: infra/backend/**
+│       ├── hub.yml                  # app: backend/** ; tf: infra/hub/**
 │       ├── worker.yml               # app: worker/** ; tf: infra/worker/**
 │       ├── agents.yml               # app: agents/incident-triage/** ; tf: infra/agents/incident-triage/**
 │       └── frontend.yml             # optional: frontend/** + infra/frontend/**
@@ -242,7 +242,7 @@ agent-hub/
 └── CLAUDE.md
 ```
 
-**CI path filters (cross-reference):** `backend/**` + **`infra/backend/**`** → hub image + hub stack; `worker/**` + **`infra/worker/**`** → worker image + worker stack; **`agents/incident-triage/**`** + **`infra/agents/incident-triage/**`** → agent image + agent stack. Apply order when queues/RDS are new: **backend** (creates SQS/RDS outputs) → **worker** → **agent\*\* (worker `terraform_remote_state` → backend).
+**CI path filters (cross-reference):** `backend/**` + **`infra/hub/**`** → hub image + hub stack; `worker/**` + **`infra/worker/**`** → worker image + worker stack; **`agents/incident-triage/**`** + **`infra/agents/incident-triage/**`** → agent image + agent stack; **`infra/localstack/**`** → dev emulated AWS. Apply order when queues/RDS are new: stack that **owns SQS/RDS** (e.g. localstack/modules in dev) → **worker** → **agent\*\* (worker `terraform_remote_state` / outputs as designed).
 
 ## Target architecture (logical)
 
@@ -316,7 +316,7 @@ flowchart TB
    - Keep [backend/](../backend/) as **FastAPI hub** service (Dockerfile at `backend/` or repo root—document choice).
    - Add top-level **`worker/`** as the **SQS consumer** (provision/KPI handlers later); same process model locally and on ECS.
    - **Capstone:** implement only **`agents/incident-triage/`** (`Dockerfile`, app code, health route, LangGraph HITL). **`agents/_template/`** optional copy-paste only.
-   - Add **`infra/`** **after** local T0: **separate Terraform root per service** under `infra/backend/`, `infra/worker/`, `infra/agents/incident-triage/`, optional `infra/frontend/`; shared code under `infra/modules/` only.
+   - Add **`infra/`** **after** local T0: **separate Terraform root per service** under `infra/hub/`, `infra/worker/`, `infra/agents/incident-triage/`, optional `infra/frontend/`, and `infra/localstack/` for dev; shared code under `infra/modules/` only.
    - **`frontend/`**, **`packages/shared/`** optional per earlier plan.
    - Mirror the [target tree](#target-repository-layout-tree) in [architecture.md](architecture.md).
 
@@ -343,7 +343,7 @@ flowchart TB
 
 6. **CI/CD (per deployable)**
    - GitHub Actions with **OIDC → AWS** (no long-lived access keys in repo if avoidable):
-     - **`backend/**`** → build/push **hub** image → **`infra/backend/`\*\* plan/apply (hub ECS/ECR/ALB/RDS/SQS as defined in that root).
+     - **`backend/**`** → build/push **hub** image → **`infra/hub/`\*\* plan/apply (App Runner / VPC connector as defined in that root).
      - **`worker/**`** → build/push **worker** image → **`infra/worker/`\*\* plan/apply.
      - **`agents/incident-triage/**`** → build/push agent image → **`infra/agents/incident-triage/`\*\* plan/apply.
      - **`frontend/**`** (if used) → **`infra/frontend/`\*\* plan/apply.
@@ -415,7 +415,7 @@ Implement in the repo (see also [Agent.md](../Agent.md)); replace the empty merm
 2. **Sequence diagram**: provision agent (including Secrets Manager + SQS + ECS).
 3. **Sequence diagram**: hybrid auth (hub issues JWT → client or server calls agent).
 4. **Repository layout:** include the **target tree** (this plan section or a trimmed variant) so onboarding matches deployables.
-5. **Text sections:** **local-first dev** (compose, LocalStack SQS, env vars), **structured logging contract** (shared fields across hub, worker, agent), isolation patterns (shared vs per-tenant), **secret handling rules**, **Terraform layout** (one root per service: `infra/backend`, `infra/worker`, `infra/agents/incident-triage`, optional `infra/frontend`; `infra/modules` shared only; state backend per root), **CI path filters + OIDC + apply order**, **environment matrix** (dev/stage/prod), dependency table (condensed), **capstone execution summary** (pointer to this plan or short checklist).
+5. **Text sections:** **local-first dev** (compose, LocalStack SQS, env vars), **structured logging contract** (shared fields across hub, worker, agent), isolation patterns (shared vs per-tenant), **secret handling rules**, **Terraform layout** (one root per service: `infra/hub`, `infra/worker`, `infra/agents/incident-triage`, optional `infra/frontend`, `infra/localstack` for dev; `infra/modules` shared only; state backend per root), **CI path filters + OIDC + apply order**, **environment matrix** (dev/stage/prod), dependency table (condensed), **capstone execution summary** (pointer to this plan or short checklist).
 6. **Dedicated sections (not duplicated in main diagram):** Langfuse tagging and tenant project strategy; custom dashboard and KPI rollups; LangGraph HITL resume flow at a high level (bullet + optional small sequence).
 
 Constraints: keep mermaid node IDs **without spaces**; use `subgraph id [Label]`; quote edge labels that contain parentheses.

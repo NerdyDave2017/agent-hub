@@ -1,16 +1,13 @@
 # Agent Hub — Deployment Architecture & Dashboard Implementation Instructions
 
-> **For the AI coding agent.** This document is the single source of truth for
-> deployment topology, agent triggering, and dashboard implementation. Previous
-> instructions that conflict with this document are superseded. Read every section
-> before writing any code.
+> **For the AI coding agent.** This document is the single source of truth for deployment topology, agent triggering, and dashboard implementation. Previous instructions that conflict with this document are superseded. Read every section before writing any code.
 
 ---
 
 ## 1. Settled Architecture Decisions (Non-Negotiable)
 
 | Decision | Resolution |
-|---|---|
+| --- | --- |
 | **Hub deployment** | AWS App Runner — managed HTTPS, auto-scaling, VPC connector for RDS |
 | **Worker deployment** | AWS ECS Fargate — private, no inbound HTTP, SQS-driven |
 | **Agent deployment** | AWS App Runner — managed HTTPS, accessible `base_url`, no VPC complexity |
@@ -40,10 +37,40 @@ App Runner (Hub)           — read-only internal API for agent enrichment
 ```
 
 **Rules enforced in code:**
+
 - Hub has no `httpx` calls to any agent URL (except the now-deleted gmail-watch notify)
 - Worker is the only service that reads `Deployment.base_url` and POSTs to it
 - Agents call hub `/internal/*` read-only endpoints with a service bearer token
 - Tenants never get agent URLs — they interact only with hub
+
+### 1.1 Terraform repository layout
+
+The repo under [`infra/`](../infra/) is ordered **modules first**, then **per-service roots**. Shared building blocks live under **`infra/modules/`**; service-specific IAM and runtime wiring live in each root.
+
+```text
+infra/
+├── modules/
+│   ├── vpc/               → VPC, subnets, NAT, VPC endpoints (SQS, ECR, SM)
+│   ├── rds/               → RDS Postgres, subnet group, DB URL secret
+│   ├── sqs/               → hub→worker queue + DLQ + queue policy (used by `infra/hub`)
+│   ├── secrets/           → KMS + Langfuse + internal token secret resources
+│   ├── app-runner/        → reusable App Runner service (hub + staging agents)
+│   └── ecs-worker/        → worker Fargate cluster, task definition, service, IAM
+├── localstack/            → development: emulated SQS + IAM + Secrets Manager (LocalStack)
+├── vpc/                   → composition root: full VPC (remote state `vpc/terraform.tfstate`)
+├── rds/                   → Postgres (depends on vpc + secrets)
+├── secrets/               → KMS + operator secrets (remote state `secrets/terraform.tfstate`)
+├── hub/                   → hub IAM, SQS, App Runner (see `docs/terraform-infra-instructions.md`)
+├── worker/                → worker ECS + EventBridge (see `docs/terraform-infra-instructions.md`)
+└── agents/
+    └── incident-triage/   → ECR + optional staging App Runner (see `terraform-infra-instructions.md`)
+```
+
+**Development (this branch):** run Terraform only in [`infra/localstack/`](../infra/localstack/) (`make local-provision`) for queues and IAM shapes. Run the hub API, worker, and agents via **Docker Compose** against that stack.
+
+**Production AWS:** compose **`infra/hub`**, **`infra/worker`**, and optional **`infra/agents/*`** with outputs from **`modules/vpc`**, **`modules/rds`**, **`modules/sqs`**, and **`modules/secrets`** as those modules gain real resources. The legacy **ECS + ALB hub** tree (`infra/backend/`) has been **removed** in favour of **App Runner** in `infra/hub/`.
+
+See [`infra/README.md`](../infra/README.md) and the full specification in [`docs/terraform-infra-instructions.md`](terraform-infra-instructions.md).
 
 ---
 
@@ -87,8 +114,7 @@ class Deployment(Base):
 
 ## 3. Worker: Agent Provisioning Handler (App Runner)
 
-The worker creates the App Runner service. After it stabilises, it writes
-`base_url` to the `Deployment` row. This is the only place `base_url` is set.
+The worker creates the App Runner service. After it stabilises, it writes `base_url` to the `Deployment` row. This is the only place `base_url` is set.
 
 File: `worker/handlers/provision.py`
 
@@ -252,9 +278,7 @@ class AgentProvisioningHandler(AbstractJobHandler):
 
 ## 4. Worker: Triggering Agent Runs via HTTP
 
-When the worker needs to trigger an agent run (e.g. after resolving a Gmail
-message ID), it POSTs to the agent's App Runner URL. This is the **only**
-service allowed to call agent URLs.
+When the worker needs to trigger an agent run (e.g. after resolving a Gmail message ID), it POSTs to the agent's App Runner URL. This is the **only** service allowed to call agent URLs.
 
 File: `worker/handlers/gmail_process_message.py`
 
@@ -341,17 +365,13 @@ class GmailProcessMessageHandler(AbstractJobHandler):
 
 **Delete these entirely. Do not refactor — delete.**
 
-- `backend/apis/integrations_gmail.py` — delete `_notify_agent_gmail_watch_active()`
-  and the `asyncio.create_task(...)` call that invokes it at the end of the
-  OAuth callback handler.
-- `agents/incident-triage/src/incident_triage/main.py` — delete the
-  `POST /internal/gmail-watch-active` endpoint.
+- `backend/apis/integrations_gmail.py` — delete `_notify_agent_gmail_watch_active()` and the `asyncio.create_task(...)` call that invokes it at the end of the OAuth callback handler.
+- `agents/incident-triage/src/incident_triage/main.py` — delete the `POST /internal/gmail-watch-active` endpoint.
 
-**Replacement:** The agent's `poll_loop` already reads `integrations.watch_active`
-from Postgres on every cycle. When the hub sets `watch_active=True` during the
-OAuth callback, the agent sees it within 60 seconds automatically. No HTTP call needed.
+**Replacement:** The agent's `poll_loop` already reads `integrations.watch_active` from Postgres on every cycle. When the hub sets `watch_active=True` during the OAuth callback, the agent sees it within 60 seconds automatically. No HTTP call needed.
 
 The `integrations_gmail.py` OAuth callback should end at:
+
 ```python
     await session.commit()
     return RedirectResponse(
@@ -364,9 +384,7 @@ The `integrations_gmail.py` OAuth callback should end at:
 
 ## 6. Hub Internal API for Agent Enrichment (Read-Only)
 
-The agent calls these two endpoints during the `enrich` graph node.
-These are the **only** hub endpoints the agent calls.
-They are authenticated with `INTERNAL_SERVICE_TOKEN`.
+The agent calls these two endpoints during the `enrich` graph node. These are the **only** hub endpoints the agent calls. They are authenticated with `INTERNAL_SERVICE_TOKEN`.
 
 ```python
 # backend/apis/internal.py
@@ -426,17 +444,16 @@ async def get_recent_incidents(
 
 ### 7.1 Philosophy
 
-The observability dashboard exists to answer one question:
-**"Is my AI agent behaving correctly, and how much is it costing me?"**
+The observability dashboard exists to answer one question: **"Is my AI agent behaving correctly, and how much is it costing me?"**
 
 AI agents in production can go wrong silently:
+
 - They can over-consume tokens without visible errors
 - They can misclassify at scale if prompt drift occurs
 - They can fail to fire tools (silently skip Slack notifications)
 - They can accumulate cost that compounds unnoticed
 
-The dashboard is the monitoring and evaluation layer that makes these
-problems visible before they become business failures.
+The dashboard is the monitoring and evaluation layer that makes these problems visible before they become business failures.
 
 ### 7.2 Two Dashboard Surfaces
 
@@ -449,8 +466,7 @@ problems visible before they become business failures.
 
 ### 7.3 Tenant Overview Dashboard (`/dashboard`)
 
-**Purpose:** High-level health across ALL agents for this tenant.
-Agents have different use cases — do not show agent-specific metrics here.
+**Purpose:** High-level health across ALL agents for this tenant. Agents have different use cases — do not show agent-specific metrics here.
 
 **What to show:**
 
@@ -564,8 +580,7 @@ class AgentSummaryRow(BaseModel):
 
 ### 7.4 Per-Agent Observability Dashboard (`/dashboard/agents/{id}`)
 
-**Purpose:** Deep observability into one agent's behaviour.
-This is the capstone showpiece — proves understanding that AI systems need monitoring.
+**Purpose:** Deep observability into one agent's behaviour. This is the capstone showpiece — proves understanding that AI systems need monitoring.
 
 **Tabs:** Overview | Traces | Incidents
 
@@ -590,11 +605,7 @@ This is the capstone showpiece — proves understanding that AI systems need mon
 └───────────────────────────┘
 ```
 
-**Token breakdown note:** Break down tokens by type IF the data is available
-in `tool_call_events`. The columns `prompt_tokens` and `completion_tokens` are
-always available. For Anthropic models, `reasoning_tokens` and `tool_use_tokens`
-may be available depending on API response. Store whatever Langfuse / the LLM
-callback provides. Display what is available, gracefully omit what is not.
+**Token breakdown note:** Break down tokens by type IF the data is available in `tool_call_events`. The columns `prompt_tokens` and `completion_tokens` are always available. For Anthropic models, `reasoning_tokens` and `tool_use_tokens` may be available depending on API response. Store whatever Langfuse / the LLM callback provides. Display what is available, gracefully omit what is not.
 
 ```python
 # Token breakdown categories to store and display:
@@ -703,14 +714,13 @@ async def live_decision_feed(
 ```typescript
 // components/dashboard/DecisionFeed.tsx
 useEffect(() => {
-  const source = new EventSource(
-    `/api/v1/dashboard/agents/${agentId}/feed`,
-    { withCredentials: true }
-  );
+  const source = new EventSource(`/api/v1/dashboard/agents/${agentId}/feed`, {
+    withCredentials: true,
+  });
 
   source.onmessage = (e) => {
     const event = JSON.parse(e.data);
-    setEvents(prev => [event, ...prev].slice(0, 100)); // keep last 100
+    setEvents((prev) => [event, ...prev].slice(0, 100)); // keep last 100
   };
 
   source.onerror = () => {
@@ -821,8 +831,7 @@ async def get_incident_detail(
 
 ### 7.5 `metrics_rollup` Worker Job
 
-Fills `metric_snapshots` for the historical charts.
-Runs hourly via EventBridge → SQS.
+Fills `metric_snapshots` for the historical charts. Runs hourly via EventBridge → SQS.
 
 File: `worker/handlers/metrics_rollup.py`
 
@@ -933,19 +942,20 @@ class MetricsRollupHandler(AbstractJobHandler):
 ```
 
 **`metric_snapshots` unique constraint — add to Alembic migration:**
+
 ```python
 UniqueConstraint("tenant_id", "agent_id", "window_start",
                  name="uq_metric_snapshot_tenant_agent_window")
 ```
 
-**Scheduling — EventBridge rule (add to Terraform `infra/worker/`):**
+**Scheduling — EventBridge (Terraform `infra/worker/`):** Hourly `metrics_rollup` and daily Gmail watch renewal rules target the hub SQS queue (see [`infra/worker/main.tf`](../infra/worker/main.tf)). The application worker may also treat other scheduled payloads (e.g. `kind: scheduled_metrics_rollup`) as documented in worker code. See [`infra/worker/README.md`](../infra/worker/README.md) and [`docs/terraform-infra-instructions.md`](terraform-infra-instructions.md).
+
 ```hcl
 resource "aws_cloudwatch_event_rule" "metrics_rollup_hourly" {
   name                = "agent-hub-metrics-rollup-hourly"
   schedule_expression = "rate(1 hour)"
 }
-# Target: SQS with MessageBody containing METRICS_ROLLUP job envelope
-# Include window_start and window_end in payload as previous hour
+# Target: SQS — worker handles non-envelope tick JSON (see worker/main.py).
 ```
 
 ---
@@ -989,23 +999,22 @@ async def verify_agent_ownership(
 
 ### 8.3 Fields that must never appear in any API response
 
-| Field | Reason |
-|---|---|
-| `incidents.raw_subject` | Contains email content — PII |
-| `incidents.raw_sender` | Email address — PII |
-| `incidents.message_id` | Gmail message ID — not useful to tenants |
-| `tool_call_events.input_summary` | May contain email content fragments |
-| Any `*_secret_arn` field | AWS resource ARN — internal only |
-| `deployments.service_arn` | Internal AWS resource identifier |
-| `langfuse_trace_id` in list views | Only in detail view, as a link |
-| Any OAuth token or credential | Never in any API, anywhere |
+| Field                             | Reason                                   |
+| --------------------------------- | ---------------------------------------- |
+| `incidents.raw_subject`           | Contains email content — PII             |
+| `incidents.raw_sender`            | Email address — PII                      |
+| `incidents.message_id`            | Gmail message ID — not useful to tenants |
+| `tool_call_events.input_summary`  | May contain email content fragments      |
+| Any `*_secret_arn` field          | AWS resource ARN — internal only         |
+| `deployments.service_arn`         | Internal AWS resource identifier         |
+| `langfuse_trace_id` in list views | Only in detail view, as a link           |
+| Any OAuth token or credential     | Never in any API, anywhere               |
 
 ---
 
 ## 9. `tool_call_events` — Token Detail Storage
 
-The agent's `@traced_node` decorator must capture token breakdown
-where available. Update `write_tool_event` to include all token types:
+The agent's `@traced_node` decorator must capture token breakdown where available. Update `write_tool_event` to include all token types:
 
 ```python
 # agents/incident-triage/src/incident_triage/instrumentation/events.py
@@ -1052,8 +1061,7 @@ async def write_tool_event(
         pass  # observability must never crash the agent
 ```
 
-Update `ToolCallEvent` model to include `reasoning_tokens` and
-`tool_use_tokens` columns. Generate Alembic migration.
+Update `ToolCallEvent` model to include `reasoning_tokens` and `tool_use_tokens` columns. Generate Alembic migration.
 
 In the `classify` node, extract token usage from the LLM response:
 
@@ -1157,32 +1165,25 @@ GET  /internal/tenants/{tenant_id}/incidents/recent
 ## 12. Hard Rules (Absolute — Do Not Deviate)
 
 ### Architecture
-- Hub **never** calls agent URLs. `httpx` calls in `backend/` must only target
-  Google APIs, Slack OAuth, and AWS services.
+
+- Hub **never** calls agent URLs. `httpx` calls in `backend/` must only target Google APIs, Slack OAuth, and AWS services.
 - Worker is the **only** service that reads `Deployment.base_url` and POSTs to it.
 - Agent calls hub `/internal/*` read-only. No writes to hub-owned tables.
-- `Deployment.base_url` is set **only** by the worker provisioning handler
-  after App Runner service reaches RUNNING status.
+- `Deployment.base_url` is set **only** by the worker provisioning handler after App Runner service reaches RUNNING status.
 
 ### Dashboard data
-- **No jobs table data** anywhere in the dashboard. Not in overview, not
-  in agent detail, not in any API response to the frontend.
-- Every SQL query touching `incidents`, `tool_call_events`, or
-  `metric_snapshots` **must** include `WHERE tenant_id = :tenant_id`
-  as the first filter condition.
-- `tool_call_events` token columns (`prompt_tokens`, `completion_tokens`,
-  `reasoning_tokens`, `tool_use_tokens`, `cost_usd`) must all be nullable
-  — only the `classify` node populates them, not all nodes.
+
+- **No jobs table data** anywhere in the dashboard. Not in overview, not in agent detail, not in any API response to the frontend.
+- Every SQL query touching `incidents`, `tool_call_events`, or `metric_snapshots` **must** include `WHERE tenant_id = :tenant_id` as the first filter condition.
+- `tool_call_events` token columns (`prompt_tokens`, `completion_tokens`, `reasoning_tokens`, `tool_use_tokens`, `cost_usd`) must all be nullable — only the `classify` node populates them, not all nodes.
 
 ### Security
+
 - Fields listed in Section 8.3 must never appear in any API response.
-- `langfuse_trace_id` appears only in the incident detail endpoint,
-  formatted as a full Langfuse URL, never as a raw ID.
+- `langfuse_trace_id` appears only in the incident detail endpoint, formatted as a full Langfuse URL, never as a raw ID.
 - All token cost estimates are display-only — never used for billing.
 
 ### Observability writing
-- `write_tool_event` is always wrapped in try/except and called via
-  `asyncio.create_task()`. It must never block graph execution or
-  propagate exceptions to the graph.
-- `langfuse.flush()` must be called in the agent's lifespan shutdown
-  before the event loop closes.
+
+- `write_tool_event` is always wrapped in try/except and called via `asyncio.create_task()`. It must never block graph execution or propagate exceptions to the graph.
+- `langfuse.flush()` must be called in the agent's lifespan shutdown before the event loop closes.

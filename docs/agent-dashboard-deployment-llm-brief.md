@@ -64,7 +64,7 @@ After a successful Gmail OAuth callback and `users.watch()`, the hub sets **`int
 ### 2.6 Local / infra in repo
 
 - **Docker Compose**: Postgres, LocalStack (SQS + IAM + STS + Secrets Manager for Terraform), optional hub/worker/agent images.
-- **Terraform**: `infra/localstack/` for local emulated AWS; **`infra/backend/`** exists as an AWS-oriented stack (may still reflect earlier ALB-centric hub assumptions — **hub is now intended to move to App Runner** per product discussion).
+- **Terraform**: `infra/localstack/` for local emulated AWS (modules `infra/modules/sqs`, `infra/modules/secrets`). **Hub on AWS** is intended as **App Runner** in `infra/hub/` (replaces removed `infra/backend/` ECS+ALB stack). Worker: `infra/worker/`; optional agent ECS: `infra/agents/incident-triage/`.
 
 ---
 
