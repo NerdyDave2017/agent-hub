@@ -2,8 +2,12 @@
 Agent registry HTTP surface.
 
 `POST` creates the **DB row** then enqueues **`agent_provisioning`** work (see `services.jobs_service`)
-so the worker can pull from SQS and reconcile ECS/ECR. Observability: same `X-Correlation-ID`
-as `POST .../jobs` when you pass it on create.
+so the worker can pull from SQS and reconcile runtime (App Runner / ECS / dev URL).
+
+Lifecycle: `POST .../{id}/pause`, `.../scale-to-zero`, `.../destroy`, `.../deprovision` enqueue jobs
+(SQS when configured). Monitor with `GET .../jobs/{job_id}` or `GET .../jobs/{job_id}/stream` (SSE).
+
+Observability: same `X-Correlation-ID` as `POST .../jobs` when you pass it on create.
 """
 
 from __future__ import annotations
@@ -15,13 +19,14 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
 
 from apis.dependencies import DbSession
 from agent_hub_core.db.engine import get_session_factory
 from agent_hub_core.domain.enums import JobType
 from agent_hub_core.schemas.agent import AgentCreate, AgentProvisioningStatusRead, AgentRead, AgentUpdate
+from agent_hub_core.schemas.job import JobRead
 from agent_hub_core.schemas.common import PaginatedMeta, PaginatedResponse
 from services import agents_service, jobs_service
 
@@ -200,6 +205,115 @@ async def stream_agent_provisioning(
         media_type="text/event-stream",
         headers=headers,
     )
+
+
+def _correlation_id(request: Request) -> str:
+    incoming = request.headers.get(_CORRELATION_HEADER)
+    return incoming.strip() if incoming and incoming.strip() else str(uuid.uuid4())
+
+
+@router.post(
+    "/{agent_id}/pause",
+    response_model=JobRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Enqueue agent_pause (App Runner pause or ECS desiredCount=0)",
+)
+async def enqueue_agent_pause(
+    session: DbSession,
+    request: Request,
+    response: Response,
+    tenant_id: UUID,
+    agent_id: UUID,
+) -> JobRead:
+    outcome = await jobs_service.create_job_with_publish(
+        session,
+        tenant_id=tenant_id,
+        job_type=JobType.agent_pause.value,
+        correlation_id=_correlation_id(request),
+        agent_id=agent_id,
+        idempotency_key=f"agent_pause:{agent_id}",
+        payload=None,
+    )
+    response.status_code = outcome.status_code
+    return JobRead.model_validate(outcome.job)
+
+
+@router.post(
+    "/{agent_id}/scale-to-zero",
+    response_model=JobRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Enqueue deployment_scale_to_zero (same worker handler as agent_pause)",
+)
+async def enqueue_agent_scale_to_zero(
+    session: DbSession,
+    request: Request,
+    response: Response,
+    tenant_id: UUID,
+    agent_id: UUID,
+) -> JobRead:
+    outcome = await jobs_service.create_job_with_publish(
+        session,
+        tenant_id=tenant_id,
+        job_type=JobType.deployment_scale_to_zero.value,
+        correlation_id=_correlation_id(request),
+        agent_id=agent_id,
+        idempotency_key=f"deployment_scale_to_zero:{agent_id}",
+        payload=None,
+    )
+    response.status_code = outcome.status_code
+    return JobRead.model_validate(outcome.job)
+
+
+@router.post(
+    "/{agent_id}/destroy",
+    response_model=JobRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Enqueue agent_destroy (delete runtime; archive agent)",
+)
+async def enqueue_agent_destroy(
+    session: DbSession,
+    request: Request,
+    response: Response,
+    tenant_id: UUID,
+    agent_id: UUID,
+) -> JobRead:
+    outcome = await jobs_service.create_job_with_publish(
+        session,
+        tenant_id=tenant_id,
+        job_type=JobType.agent_destroy.value,
+        correlation_id=_correlation_id(request),
+        agent_id=agent_id,
+        idempotency_key=f"agent_destroy:{agent_id}",
+        payload=None,
+    )
+    response.status_code = outcome.status_code
+    return JobRead.model_validate(outcome.job)
+
+
+@router.post(
+    "/{agent_id}/deprovision",
+    response_model=JobRead,
+    status_code=status.HTTP_201_CREATED,
+    summary="Enqueue agent_deprovision (same worker handler as agent_destroy)",
+)
+async def enqueue_agent_deprovision(
+    session: DbSession,
+    request: Request,
+    response: Response,
+    tenant_id: UUID,
+    agent_id: UUID,
+) -> JobRead:
+    outcome = await jobs_service.create_job_with_publish(
+        session,
+        tenant_id=tenant_id,
+        job_type=JobType.agent_deprovision.value,
+        correlation_id=_correlation_id(request),
+        agent_id=agent_id,
+        idempotency_key=f"agent_deprovision:{agent_id}",
+        payload=None,
+    )
+    response.status_code = outcome.status_code
+    return JobRead.model_validate(outcome.job)
 
 
 @router.get("/{agent_id}", response_model=AgentRead)
