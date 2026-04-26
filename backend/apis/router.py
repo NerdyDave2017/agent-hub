@@ -2,9 +2,10 @@
 
 from fastapi import APIRouter
 
-from apis import agents, dashboard, integrations_gmail, integrations_slack, jobs, tenants
+from apis import agents, auth, dashboard, integrations_gmail, integrations_slack, jobs, tenants
 
 api_router = APIRouter()
+api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 # Register more specific `/tenants/{tenant_id}/dashboard/*` before `/tenants/{tenant_id}` routes.
 api_router.include_router(
     dashboard.router,

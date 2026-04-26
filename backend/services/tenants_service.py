@@ -16,7 +16,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent_hub_core.db.models import Tenant
+from agent_hub_core.db.models import Tenant, User
 from agent_hub_core.domain.exceptions import TenantNotFound, TenantSlugConflict
 
 
@@ -40,6 +40,42 @@ async def list_tenants_page(
         select(Tenant).order_by(Tenant.created_at.desc()).offset(skip).limit(limit)
     )
     return list(rows.all()), total
+
+
+async def create_tenant_with_owner(
+    session: AsyncSession,
+    *,
+    tenant_name: str,
+    slug: str,
+    owner_email: str,
+    owner_display_name: str,
+    password_hash: str,
+) -> tuple[Tenant, User]:
+    """
+    Create a tenant and its first user in one transaction.
+
+    On slug or email uniqueness violation, rolls back and raises ``TenantSlugConflict``
+    (slug collisions); callers may retry with a new slug suffix.
+    """
+    tenant = Tenant(name=tenant_name, slug=slug)
+    session.add(tenant)
+    await session.flush()
+    user = User(
+        tenant_id=tenant.id,
+        email=owner_email,
+        display_name=owner_display_name,
+        password_hash=password_hash,
+        is_active=True,
+    )
+    session.add(user)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise TenantSlugConflict(slug) from None
+    await session.refresh(tenant)
+    await session.refresh(user)
+    return tenant, user
 
 
 async def create_tenant(session: AsyncSession, *, name: str, slug: str) -> Tenant:

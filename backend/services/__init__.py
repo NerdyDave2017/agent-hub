@@ -11,4 +11,5 @@ Layout
 * `tenants_service` — tenant registry CRUD and `require_tenant` guard.
 * `agents_service` — agents scoped to a tenant.
 * `jobs_service` — durable jobs + optional SQS publish (also used when other flows enqueue work).
+* `dashboard_service` — tenant/agent observability reads for dashboard APIs.
 """

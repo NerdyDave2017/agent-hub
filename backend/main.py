@@ -54,6 +54,7 @@ def create_app() -> FastAPI:
             {"name": "agents", "description": "Agent types and lifecycle metadata"},
             {"name": "jobs", "description": "Async jobs — Postgres row then optional SQS publish when SQS_QUEUE_URL is set"},
             {"name": "dashboard", "description": "Tenant overview and per-agent observability (Postgres)"},
+            {"name": "auth", "description": "JWT sign-up and login for dashboard APIs"},
         ],
     )
 
