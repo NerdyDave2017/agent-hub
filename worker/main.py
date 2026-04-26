@@ -21,7 +21,7 @@ from agent_hub_core.observability.logging import configure_logging, get_logger
 
 from worker.handlers.registry import handler_for_job_type
 from worker.messaging.metrics_schedule import enqueue_metrics_rollup_for_previous_hour
-from worker.queue.sqs_receive import delete_message, receive_long_poll
+from worker.sqs_transport.sqs_receive import delete_message, receive_long_poll
 
 log = get_logger(__name__)
 

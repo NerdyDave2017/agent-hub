@@ -180,7 +180,7 @@ You should see a JSON body matching **`JobQueueEnvelope`** (see [`messaging/enve
 
 ## Worker (slice 1 — SQS + envelope + DB ping)
 
-The worker lives under [`worker/`](worker/): **orchestration** in [`worker/main.py`](worker/main.py), **structlog → JSON** via [`agent_hub_core.observability.logging`](packages/agent-hub-core/src/agent_hub_core/observability/logging.py) (UTC `timestamp`, `pathname` / `filename` / `lineno` / `func_name`, default `service`), **SQS receive/delete** in [`worker/queue/sqs_receive.py`](worker/queue/sqs_receive.py), and **job dispatch** under [`worker/handlers/`](worker/handlers/) (`registry.py` + per-`JobType` handlers; AWS adapters scaffolded in [`worker/handlers/aws/`](worker/handlers/aws/)).
+The worker lives under [`worker/`](worker/): **orchestration** in [`worker/main.py`](worker/main.py), **structlog → JSON** via [`agent_hub_core.observability.logging`](packages/agent-hub-core/src/agent_hub_core/observability/logging.py) (UTC `timestamp`, `pathname` / `filename` / `lineno` / `func_name`, default `service`), **SQS receive/delete** in [`worker/sqs_transport/sqs_receive.py`](worker/sqs_transport/sqs_receive.py), and **job dispatch** under [`worker/handlers/`](worker/handlers/) (`registry.py` + per-`JobType` handlers; AWS adapters scaffolded in [`worker/handlers/aws/`](worker/handlers/aws/)).
 
 **Behaviour:** DB ping on startup; long-poll SQS; validate **`JobQueueEnvelope`**; load **`jobs`** row; run the registered handler (stub transitions for now); **`DeleteMessage`** only after the handler completes without raising (malformed envelope, missing job, or handler errors leave the message for retry / DLQ).
 

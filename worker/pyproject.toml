@@ -27,7 +27,7 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.package-dir]
 worker = "."
 "worker.core" = "core"
-"worker.queue" = "queue"
+"worker.sqs_transport" = "sqs_transport"
 "worker.handlers" = "handlers"
 "worker.handlers.aws" = "handlers/aws"
 "worker.messaging" = "messaging"
@@ -36,7 +36,7 @@ worker = "."
 packages = [
   "worker",
   "worker.core",
-  "worker.queue",
+  "worker.sqs_transport",
   "worker.handlers",
   "worker.handlers.aws",
   "worker.messaging",
