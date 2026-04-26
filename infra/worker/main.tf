@@ -193,6 +193,12 @@ module "worker" {
   agent_instance_role_arn    = aws_iam_role.agent_instance.arn
   extra_environment = concat(
     var.worker_extra_environment,
+    var.worker_deploy_revision == "" ? [] : [
+      {
+        name  = "AGENT_HUB_DEPLOY_REVISION"
+        value = var.worker_deploy_revision
+      },
+    ],
     [
       {
         name  = "APP_RUNNER_CREATE_IMAGE_IDENTIFIER"

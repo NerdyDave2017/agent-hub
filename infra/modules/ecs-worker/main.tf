@@ -268,8 +268,4 @@ resource "aws_ecs_service" "worker" {
   }
 
   tags = merge(local.default_tags, { Name = "${var.project}-${var.environment}-worker-service" })
-
-  lifecycle {
-    ignore_changes = [task_definition]
-  }
 }

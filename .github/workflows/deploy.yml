@@ -254,8 +254,7 @@ jobs:
           environment: ${{ needs.provision.outputs.environment }}
           aws-region: ${{ env.AWS_REGION }}
           aws-account-id: ${{ env.AWS_ACCOUNT_ID }}
-          hub-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_HUB }}:${{
-            github.sha }}
+          hub-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_HUB }}:latest
           worker-role-arn: ""
           frontend-url: ${{ vars.TF_VAR_frontend_url }}
           gmail-pubsub-topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
@@ -273,8 +272,8 @@ jobs:
           environment: ${{ needs.provision.outputs.environment }}
           aws-region: ${{ env.AWS_REGION }}
           aws-account-id: ${{ env.AWS_ACCOUNT_ID }}
-          worker-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_WORKER }}:${{
-            github.sha }}
+          worker-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_WORKER }}:latest
+          worker-deploy-revision: ${{ github.sha }}-${{ github.run_id }}
           gcp-project-id: ${{ vars.TF_VAR_gcp_project_id }}
           gmail-pubsub-topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
           ecr-registry: ${{ env.ECR_REGISTRY }}
@@ -295,8 +294,7 @@ jobs:
           environment: ${{ needs.provision.outputs.environment }}
           aws-region: ${{ env.AWS_REGION }}
           aws-account-id: ${{ env.AWS_ACCOUNT_ID }}
-          hub-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_HUB }}:${{
-            github.sha }}
+          hub-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_HUB }}:latest
           worker-role-arn: ${{ steps.worker_role.outputs.arn }}
           frontend-url: ${{ vars.TF_VAR_frontend_url }}
           gmail-pubsub-topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
@@ -328,6 +326,10 @@ jobs:
             --cluster "$WORKER_CLUSTER_NAME" \
             --service "$WORKER_SERVICE_NAME" \
             --force-new-deployment \
+            --no-cli-pager
+          aws ecs wait services-stable \
+            --cluster "$WORKER_CLUSTER_NAME" \
+            --services "$WORKER_SERVICE_NAME" \
             --no-cli-pager
 
       - name: Export final deploy outputs

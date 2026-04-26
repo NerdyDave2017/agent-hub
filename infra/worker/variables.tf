@@ -15,6 +15,12 @@ variable "worker_image_uri" {
   type = string
 }
 
+variable "worker_deploy_revision" {
+  type        = string
+  default     = ""
+  description = "Changes every CI run; injected as container env so a new ECS task definition revision is registered even when worker_image_uri stays :latest."
+}
+
 variable "gcp_project_id" {
   type = string
 }
