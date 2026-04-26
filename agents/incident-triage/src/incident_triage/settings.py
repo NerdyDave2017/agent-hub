@@ -33,8 +33,14 @@ class Settings(BaseSettings):
     host: str = Field(default="0.0.0.0", validation_alias="HOST")
     port: int = Field(default=8001, validation_alias="PORT")
 
-    tenant_id: str = Field(default="", validation_alias="TENANT_ID")
-    agent_id: str = Field(default="", validation_alias="AGENT_ID")
+    tenant_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("TENANT_ID", "AGENT_HUB_TENANT_ID"),
+    )
+    agent_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("AGENT_ID", "AGENT_HUB_AGENT_ID"),
+    )
     hub_base_url: str = Field(default="", validation_alias="HUB_BASE_URL")
     environment: str = Field(default="development", validation_alias="ENVIRONMENT")
 

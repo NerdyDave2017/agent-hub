@@ -78,6 +78,41 @@ def _app_runner_service_name(agent_id: UUID) -> str:
     return f"ah-{agent_id}"
 
 
+def _summarize_apprunner_service(svc: dict) -> str:
+    """Safe one-line summary for errors (no ``RuntimeEnvironmentVariables`` values)."""
+    parts: list[str] = [f"Status={svc.get('Status')!r}"]
+    hc = svc.get("HealthCheckConfiguration")
+    if isinstance(hc, dict):
+        parts.append(
+            f"health={hc.get('Protocol')}:{hc.get('Path')!r} "
+            f"interval={hc.get('Interval')} unhealthy_threshold={hc.get('UnhealthyThreshold')}"
+        )
+    src = svc.get("SourceConfiguration")
+    if isinstance(src, dict):
+        ir = src.get("ImageRepository")
+        if isinstance(ir, dict):
+            ident = ir.get("ImageIdentifier")
+            if ident:
+                parts.append(f"image={ident!r}")
+            icfg = ir.get("ImageConfiguration")
+            if isinstance(icfg, dict):
+                port = icfg.get("Port")
+                if port:
+                    parts.append(f"container_port={port!r}")
+                rev = icfg.get("RuntimeEnvironmentVariables")
+                if isinstance(rev, dict) and rev:
+                    parts.append(f"runtime_env_keys={sorted(rev.keys())}")
+    net = svc.get("NetworkConfiguration")
+    if isinstance(net, dict):
+        eg = net.get("EgressConfiguration")
+        if isinstance(eg, dict):
+            if eg.get("VpcConnectorArn"):
+                parts.append("egress=VPC")
+            elif eg.get("EgressType"):
+                parts.append(f"egress={eg.get('EgressType')!r}")
+    return "; ".join(parts)
+
+
 async def _wait_apprunner_running(
     settings: Settings,
     service_arn: str,
@@ -110,8 +145,26 @@ async def _wait_apprunner_running(
                 if isinstance(latest, dict):
                     op_status = str(latest.get("Status") or "")
                     if op_status in _terminal_ops:
+
+                        def _describe_for_error() -> str:
+                            try:
+                                dr = adapter.describe_service(service_arn)
+                                s = dr.get("Service") if isinstance(dr, dict) else None
+                                if isinstance(s, dict):
+                                    return _summarize_apprunner_service(s)
+                            except Exception as exc:
+                                return f"DescribeService failed: {exc!r}"
+                            return "DescribeService returned no Service"
+
+                        dbg = await asyncio.to_thread(_describe_for_error)
+                        op_bits = {
+                            k: latest.get(k)
+                            for k in ("Id", "Type", "Status", "TargetArn", "StartedAt", "EndedAt")
+                        }
                         raise RuntimeError(
-                            f"App Runner operation {latest.get('Type')!r} ended with {op_status!r}: {latest!r}"
+                            f"App Runner operation {latest.get('Type')!r} ended with {op_status!r}; "
+                            f"operation={op_bits}; describe={dbg}. "
+                            "Check CloudWatch logs for this App Runner service (pull, start, health check)."
                         )
         except RuntimeError:
             raise
@@ -132,7 +185,7 @@ async def _wait_apprunner_running(
         if status == "RUNNING":
             return svc
         if status in ("CREATE_FAILED", "DELETE_FAILED", "DELETED"):
-            raise RuntimeError(f"App Runner service {status}: {svc!r}")
+            raise RuntimeError(f"App Runner service {status}: {_summarize_apprunner_service(svc)}")
         await asyncio.sleep(interval_s)
 
     last_status = last.get("Status") if isinstance(last, dict) else None
