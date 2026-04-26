@@ -1,11 +1,13 @@
 locals {
   project     = "agent-hub"
   environment = var.environment
-  hub_ecr_repo = regexreplace(
-    regexreplace(var.hub_image_uri, "^[0-9]+\\.dkr\\.ecr\\.[^.]+\\.amazonaws\\.com/", ""),
-    "(@.*|:[^:/]+)$",
+  # ECR repository path only (no registry, tag, or digest). Avoid regexreplace for older Terraform.
+  hub_image_stripped = replace(
+    var.hub_image_uri,
+    "${var.aws_account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/",
     "",
   )
+  hub_ecr_repo = length(split("@", local.hub_image_stripped)) > 1 ? split("@", local.hub_image_stripped)[0] : split(":", local.hub_image_stripped)[0]
 }
 
 data "terraform_remote_state" "vpc" {

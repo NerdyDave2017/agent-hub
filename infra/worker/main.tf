@@ -1,11 +1,12 @@
 locals {
   project     = "agent-hub"
   environment = var.environment
-  worker_ecr_repo = regexreplace(
-    regexreplace(var.worker_image_uri, "^[0-9]+\\.dkr\\.ecr\\.[^.]+\\.amazonaws\\.com/", ""),
-    "(@.*|:[^:/]+)$",
+  worker_image_stripped = replace(
+    var.worker_image_uri,
+    "${var.aws_account_id}.dkr.ecr.${var.aws_region}.amazonaws.com/",
     "",
   )
+  worker_ecr_repo = length(split("@", local.worker_image_stripped)) > 1 ? split("@", local.worker_image_stripped)[0] : split(":", local.worker_image_stripped)[0]
   # ECR repo name matches infra/agents/incident-triage default: agent-hub/{env}/incident-triage
   agent_ecr_repo = var.agent_ecr_repository != "" ? var.agent_ecr_repository : "${local.project}/${local.environment}/incident-triage"
   # Full image ref for worker App Runner CreateService (must exist in ECR before first provision).
