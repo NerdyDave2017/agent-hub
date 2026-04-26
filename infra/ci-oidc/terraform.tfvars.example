@@ -1,0 +1,16 @@
+# Apply once with human credentials (console SSO or short-lived keys), then use the
+# output github_actions_role_arn in GitHub: Settings → Secrets → AWS_ROLE_TO_ASSUME
+# (or your chosen secret name matching .github/workflows/terraform.yml).
+
+aws_region          = "us-east-1"
+github_organization = "YOUR_ORG"
+github_repository   = "agent-hub"
+
+# If the account already has GitHub OIDC:
+# create_github_oidc_provider         = false
+# existing_github_oidc_provider_arn   = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"
+
+# Grant enough IAM for Terraform to manage this account (narrow for production):
+attach_policy_arns = [
+  "arn:aws:iam::aws:policy/AdministratorAccess",
+]

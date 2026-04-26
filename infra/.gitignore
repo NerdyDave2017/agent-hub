@@ -1,4 +1,4 @@
-# Terraform in any service root: infra/backend/, infra/worker/, infra/agents/*/, etc.
+# Terraform in any service root: infra/hub/, infra/vpc/, infra/rds/, infra/secrets/, infra/worker/, infra/agents/*/, infra/localstack/, etc.
 **/.terraform/
 **/.terraform.tfstate.lock.info
 *.tfstate

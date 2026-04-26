@@ -1,6 +1,3 @@
-# Optional parity with prod: agents/workers resolve some values via Secrets Manager ARNs.
-# Hub still uses INTERNAL_SERVICE_TOKEN from env in normal local dev.
-
 resource "aws_secretsmanager_secret" "internal_service_token" {
   name = "agent-hub/local/internal-service-token"
   tags = {

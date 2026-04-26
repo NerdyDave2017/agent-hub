@@ -1,0 +1,2 @@
+environment = "staging"
+# db_password = "change-me-strong-password"

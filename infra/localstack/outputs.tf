@@ -17,7 +17,7 @@ output "sqs_dlq_arn" {
 }
 
 output "iam_role_arn_hub" {
-  description = "ECS task role ARN for hub (prod-style); local apps typically still use static test creds."
+  description = "App Runner instance role ARN (prod-style trust); local apps typically still use static test creds."
   value       = aws_iam_role.hub.arn
 }
 

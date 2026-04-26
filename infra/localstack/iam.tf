@@ -1,4 +1,5 @@
-# IAM roles mirror **ECS task role** shapes for prod. Local apps still use
+# IAM roles mirror **production trust shapes**: hub = App Runner instance role;
+# worker + optional on-AWS agent = ECS task roles. Local apps still use
 # AWS_ACCESS_KEY_ID=test against LocalStack unless you wire STS assume-role.
 
 locals {
@@ -18,9 +19,19 @@ data "aws_iam_policy_document" "ecs_task_assume" {
   }
 }
 
+data "aws_iam_policy_document" "apprunner_instance_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["tasks.apprunner.amazonaws.com"]
+    }
+  }
+}
+
 resource "aws_iam_role" "hub" {
-  name               = "agent-hub-local-hub-task"
-  assume_role_policy = data.aws_iam_policy_document.ecs_task_assume.json
+  name               = "agent-hub-local-hub-apprunner"
+  assume_role_policy = data.aws_iam_policy_document.apprunner_instance_assume.json
 
   tags = {
     Service = "agent-hub-backend"
@@ -47,8 +58,6 @@ resource "aws_iam_role" "agent" {
     Stack   = "localstack"
   }
 }
-
-# --- Hub: enqueue jobs + manage integration secrets (OAuth flows) ---
 
 resource "aws_iam_role_policy" "hub" {
   name = "hub-localstack"
@@ -84,8 +93,6 @@ resource "aws_iam_role_policy" "hub" {
     ]
   })
 }
-
-# --- Worker: consume queue + read/write tenant secrets + AWS adapter scaffolds ---
 
 resource "aws_iam_role_policy" "worker" {
   name = "worker-localstack"
@@ -123,23 +130,23 @@ resource "aws_iam_role_policy" "worker" {
         Resource = "${local.secrets_arn_prefix}:*"
       },
       {
-        Sid    = "EcsProvisioningScaffold"
+        Sid    = "AppRunnerProvisioningScaffold"
         Effect = "Allow"
         Action = [
-          "ecs:DescribeClusters",
-          "ecs:DescribeServices",
-          "ecs:DescribeTaskDefinition",
-          "ecs:DescribeTasks",
-          "ecs:ListTasks",
-          "ecs:RegisterTaskDefinition",
-          "ecs:RunTask",
-          "ecs:CreateService",
-          "ecs:UpdateService",
+          "apprunner:CreateService",
+          "apprunner:DescribeService",
+          "apprunner:DeleteService",
+          "apprunner:ListServices",
+          "apprunner:ListOperations",
+          "apprunner:DescribeOperation",
+          "apprunner:StartDeployment",
+          "apprunner:TagResource",
+          "apprunner:UntagResource",
         ]
         Resource = "*"
       },
       {
-        Sid    = "EcrScaffold"
+        Sid    = "EcrForAppRunnerImages"
         Effect = "Allow"
         Action = [
           "ecr:GetAuthorizationToken",
@@ -150,27 +157,10 @@ resource "aws_iam_role_policy" "worker" {
           "ecr:DescribeImages",
         ]
         Resource = "*"
-      },
-      {
-        Sid    = "Elbv2Scaffold"
-        Effect = "Allow"
-        Action = [
-          "elasticloadbalancing:DescribeLoadBalancers",
-          "elasticloadbalancing:DescribeTargetGroups",
-          "elasticloadbalancing:DescribeTargetHealth",
-          "elasticloadbalancing:DescribeListeners",
-          "elasticloadbalancing:CreateLoadBalancer",
-          "elasticloadbalancing:CreateTargetGroup",
-          "elasticloadbalancing:CreateListener",
-          "elasticloadbalancing:RegisterTargets",
-        ]
-        Resource = "*"
       }
     ]
   })
 }
-
-# --- Agent: resolve operator secrets from ARNs (no SQS) ---
 
 resource "aws_iam_role_policy" "agent" {
   name = "incident-triage-localstack"

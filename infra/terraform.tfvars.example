@@ -1,0 +1,13 @@
+# Copy the relevant subset into each root’s terraform.tfvars:
+#   infra/vpc/terraform.tfvars
+#   infra/rds/terraform.tfvars
+#   infra/secrets/terraform.tfvars
+#   infra/hub/terraform.tfvars
+#   infra/worker/terraform.tfvars
+#   infra/agents/incident-triage/terraform.tfvars
+#
+# See docs/terraform-infra-instructions.md — Deployment Order.
+
+environment   = "staging"
+aws_region    = "us-east-1"
+aws_account_id = "123456789012"
