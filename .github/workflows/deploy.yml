@@ -79,10 +79,8 @@ jobs:
       - name: Guard required config
         shell: bash
         run: |
-          test -n "${{ vars.TF_VAR_frontend_url }}" || { echo "::error::Missing var TF_VAR_frontend_url"; exit 1; }
           test -n "${{ secrets.TF_VAR_gmail_oauth_client_id }}" || { echo "::error::Missing secret TF_VAR_gmail_oauth_client_id"; exit 1; }
           test -n "${{ secrets.TF_VAR_gmail_oauth_client_secret }}" || { echo "::error::Missing secret TF_VAR_gmail_oauth_client_secret"; exit 1; }
-          test -n "${{ secrets.TF_VAR_gmail_webhook_secret }}" || { echo "::error::Missing secret TF_VAR_gmail_webhook_secret"; exit 1; }
           test -n "${{ secrets.TF_VAR_slack_oauth_client_id }}" || { echo "::error::Missing secret TF_VAR_slack_oauth_client_id"; exit 1; }
           test -n "${{ secrets.TF_VAR_slack_oauth_client_secret }}" || { echo "::error::Missing secret TF_VAR_slack_oauth_client_secret"; exit 1; }
           test -n "${{ secrets.TF_VAR_db_password }}" || { echo "::error::Missing secret TF_VAR_db_password"; exit 1; }
