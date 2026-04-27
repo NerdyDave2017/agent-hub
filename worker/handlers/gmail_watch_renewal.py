@@ -98,10 +98,12 @@ class GmailWatchRenewalHandler(AbstractJobHandler):
         settings = get_settings()
         topic = (settings.google_pubsub_topic or "").strip()
         if not topic:
-            await fail_job_while_running(
-                session,
-                job.id,
-                message="GOOGLE_PUBSUB_TOPIC not configured",
+            await complete_job_success(session, job.id, final_step=_DONE)
+            await session.refresh(job)
+            log.info(
+                "gmail_watch_renewal_skipped_no_pubsub",
+                job_id=str(job.id),
+                message="GOOGLE_PUBSUB_TOPIC unset; push renewals disabled (polling hubs).",
             )
             return
 

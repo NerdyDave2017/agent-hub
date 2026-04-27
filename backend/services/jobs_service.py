@@ -19,8 +19,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_hub_core.config.settings import get_settings
-from agent_hub_core.db.models import Job
-from agent_hub_core.domain.enums import JobStatus
+from agent_hub_core.db.models import Agent, Job
+from agent_hub_core.domain.enums import JobStatus, JobType
 from agent_hub_core.domain.exceptions import JobNotFound
 from agent_hub_core.domain.job_payload import assert_safe_job_payload
 from agent_hub_core.messaging.envelope import JobQueueEnvelope
@@ -66,7 +66,40 @@ async def get_job_for_tenant(session: AsyncSession, tenant_id: UUID, job_id: UUI
 async def get_all_tenant_jobs(session: AsyncSession, tenant_id: UUID) -> List[Job]:
     """Return all jobs for a tenant."""
     return await session.scalars(select(Job).where(Job.tenant_id == tenant_id))
-    
+
+
+_DESTROY_JOB_TYPES = frozenset(
+    {JobType.agent_destroy.value, JobType.agent_deprovision.value},
+)
+
+
+async def _should_supersede_destroy_idempotency(
+    session: AsyncSession,
+    existing: Job,
+    *,
+    tenant_id: UUID,
+    agent_id: UUID | None,
+) -> bool:
+    """
+    Allow a new ``agent_destroy`` / ``agent_deprovision`` row to reuse the canonical
+    idempotency key when the prior attempt is no longer a safe replay.
+
+    Otherwise a **failed** first delete (common after pause/archived + AWS teardown quirks)
+    blocks all retries because ``create_job_with_publish`` would keep returning the same
+    terminal job without enqueueing SQS again.
+    """
+    if agent_id is None or existing.tenant_id != tenant_id:
+        return False
+    if existing.job_type not in _DESTROY_JOB_TYPES:
+        return False
+    if existing.status in (JobStatus.failed, JobStatus.dead_lettered):
+        return existing.agent_id == agent_id
+    if existing.status == JobStatus.succeeded:
+        row = await session.get(Agent, agent_id)
+        return row is not None
+    return False
+
+
 async def create_job_with_publish(
     session: AsyncSession,
     *,
@@ -102,7 +135,20 @@ async def create_job_with_publish(
             )
         )
         if existing is not None:
-            return CreateJobResult(job=existing, status_code=_STATUS_IDEMPOTENT_REPLAY)
+            if await _should_supersede_destroy_idempotency(
+                session, existing, tenant_id=tenant_id, agent_id=agent_id
+            ):
+                existing.idempotency_key = f"{idempotency_key}:superseded:{existing.id}"
+                await session.commit()
+                log.info(
+                    "job_idempotency_superseded_for_retry",
+                    prior_job_id=str(existing.id),
+                    tenant_id=str(tenant_id),
+                    agent_id=str(agent_id) if agent_id else None,
+                    prior_status=existing.status.value,
+                )
+            else:
+                return CreateJobResult(job=existing, status_code=_STATUS_IDEMPOTENT_REPLAY)
 
     job = Job(
         tenant_id=tenant_id,

@@ -1,4 +1,8 @@
-"""Gmail OAuth + ``users.watch`` — tenant connects mailbox to platform Pub/Sub topic."""
+"""Gmail OAuth — stores tokens in Secrets Manager and the ``integrations`` row.
+
+When ``GOOGLE_PUBSUB_TOPIC`` is set, also registers Gmail ``users.watch`` for push.
+Otherwise OAuth completes without watch; the incident-triage agent uses polling.
+"""
 
 from __future__ import annotations
 
@@ -33,8 +37,8 @@ def _oauth_code_metrics(code: str | None) -> dict[str, int | bool]:
         return {"oauth_code_present": False}
     return {"oauth_code_present": True, "oauth_code_length": len(code)}
 
-# Hub never calls the agent over HTTP. After OAuth, `integrations.watch_active=True`
-# (set below) lets the agent poll loop skip Gmail polling when hub Pub/Sub is active.
+# When Pub/Sub push is enabled, webhooks may set `watch_active=True` so the agent skips
+# its Gmail poll loop; polling-only hubs leave `watch_active=False`.
 
 GMAIL_SCOPES = [
     "https://www.googleapis.com/auth/gmail.readonly",
@@ -290,73 +294,75 @@ async def gmail_oauth_callback(
     )
 
     topic = (settings.google_pubsub_topic or "").strip()
-    if not topic:
-        log.warning(
-            "gmail_oauth_pubsub_topic_missing",
+    history_id = ""
+    watch_expires_at: datetime | None = None
+    watch_resource_id = ""
+
+    if topic:
+        oauth_creds = Credentials(
+            token=creds.token,
+            refresh_token=creds.refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=settings.google_oauth_client_id,
+            client_secret=settings.google_oauth_client_secret,
+            scopes=list(creds.scopes or GMAIL_SCOPES),
+        )
+        gmail = build("gmail", "v1", credentials=oauth_creds, cache_discovery=False)
+        log.info(
+            "gmail_oauth_watch_begin",
             tenant_id=str(tenant_id),
             agent_id=str(agent_id),
+            topic_suffix=topic.split("/")[-1] if "/" in topic else topic[:80],
         )
-        raise HTTPException(
-            status_code=400,
-            detail="GOOGLE_PUBSUB_TOPIC is not configured on this hub; cannot complete Gmail push setup (users.watch).",
-        )
-
-    oauth_creds = Credentials(
-        token=creds.token,
-        refresh_token=creds.refresh_token,
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=settings.google_oauth_client_id,
-        client_secret=settings.google_oauth_client_secret,
-        scopes=list(creds.scopes or GMAIL_SCOPES),
-    )
-    gmail = build("gmail", "v1", credentials=oauth_creds, cache_discovery=False)
-    log.info(
-        "gmail_oauth_watch_begin",
-        tenant_id=str(tenant_id),
-        agent_id=str(agent_id),
-        topic_suffix=topic.split("/")[-1] if "/" in topic else topic[:80],
-    )
-    try:
-        watch_response = (
-            gmail.users()
-            .watch(
-                userId="me",
-                body={
-                    "topicName": topic,
-                    "labelIds": ["INBOX"],
-                    "labelFilterBehavior": "INCLUDE",
-                },
+        try:
+            watch_response = (
+                gmail.users()
+                .watch(
+                    userId="me",
+                    body={
+                        "topicName": topic,
+                        "labelIds": ["INBOX"],
+                        "labelFilterBehavior": "INCLUDE",
+                    },
+                )
+                .execute()
             )
-            .execute()
+        except Exception as exc:
+            log.exception(
+                "gmail_watch_failed",
+                tenant_id=str(tenant_id),
+                agent_id=str(agent_id),
+                topic_configured=True,
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Gmail users.watch() failed. Ensure the Pub/Sub topic exists and "
+                    "gmail-api-push@system.gserviceaccount.com can publish to it. "
+                    f"Error: {exc}"
+                ),
+            ) from exc
+
+        watch_expires_at = datetime.fromtimestamp(
+            int(watch_response["expiration"]) / 1000,
+            tz=timezone.utc,
         )
-    except Exception as exc:
-        log.exception(
-            "gmail_watch_failed",
+        history_id = str(watch_response.get("historyId") or "")
+        watch_resource_id = str(watch_response.get("resourceId") or "")
+        log.info(
+            "gmail_oauth_watch_ok",
             tenant_id=str(tenant_id),
             agent_id=str(agent_id),
-            topic_configured=bool(topic),
+            watch_expires_at=watch_expires_at.isoformat(),
+            has_history_id=bool(history_id),
         )
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Gmail users.watch() failed. Ensure the Pub/Sub topic exists and "
-                "gmail-api-push@system.gserviceaccount.com can publish to it. "
-                f"Error: {exc}"
-            ),
-        ) from exc
-
-    watch_expires_at = datetime.fromtimestamp(
-        int(watch_response["expiration"]) / 1000,
-        tz=timezone.utc,
-    )
-    history_id = str(watch_response.get("historyId") or "")
-    log.info(
-        "gmail_oauth_watch_ok",
-        tenant_id=str(tenant_id),
-        agent_id=str(agent_id),
-        watch_expires_at=watch_expires_at.isoformat(),
-        has_history_id=bool(history_id),
-    )
+    else:
+        log.info(
+            "gmail_oauth_no_pubsub_topic_polling_mode",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
+            message="GOOGLE_PUBSUB_TOPIC unset; skipping users.watch (agent uses Gmail polling).",
+        )
 
     existing = await session.scalar(
         select(Integration).where(
@@ -372,7 +378,7 @@ async def gmail_oauth_callback(
         existing.last_history_id = history_id
         existing.watch_expires_at = watch_expires_at
         existing.watch_active = False
-        existing.watch_resource_id = str(watch_response.get("resourceId") or "")
+        existing.watch_resource_id = watch_resource_id
         existing.connection_status = "active"
         existing.scopes = scopes_str
     else:
@@ -387,7 +393,7 @@ async def gmail_oauth_callback(
                 last_history_id=history_id,
                 watch_expires_at=watch_expires_at,
                 watch_active=False,
-                watch_resource_id=str(watch_response.get("resourceId") or ""),
+                watch_resource_id=watch_resource_id,
                 connection_status="active",
             )
         )
