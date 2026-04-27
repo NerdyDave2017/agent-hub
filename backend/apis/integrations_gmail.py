@@ -252,17 +252,24 @@ async def gmail_oauth_callback(
         )
     except ClientError as exc:
         err_code = (exc.response.get("Error") or {}).get("Code", "ClientError")
-        log.exception(
+        log.error(
             "gmail_oauth_secret_upsert_failed",
             tenant_id=str(tenant_id),
             agent_id=str(agent_id),
             secret_name=secret_name,
             aws_error_code=err_code,
+            exc_info=True,
         )
-        raise HTTPException(
-            status_code=400,
-            detail=f"Failed to store Gmail OAuth token in AWS Secrets Manager ({err_code}). Check IAM permissions.",
-        ) from exc
+        detail = f"Failed to store Gmail OAuth token in AWS Secrets Manager ({err_code})."
+        if err_code == "AccessDeniedException":
+            detail += (
+                f" Secret id `{secret_name}` must match the hub task role Secrets Manager resource pattern "
+                f"(e.g. `arn:aws:secretsmanager:<region>:<account>:secret:{settings.app_name}/tenant/*`). "
+                "Re-apply `infra/hub` Terraform so the hub policy includes that ARN prefix."
+            )
+        else:
+            detail += " Check IAM permissions (CreateSecret, PutSecretValue, DescribeSecret) and KMS decrypt on the key used by those secrets."
+        raise HTTPException(status_code=400, detail=detail) from exc
     except Exception as exc:
         log.exception(
             "gmail_oauth_secret_upsert_failed",

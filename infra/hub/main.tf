@@ -123,7 +123,9 @@ resource "aws_iam_role_policy" "hub" {
           "secretsmanager:TagResource",
         ]
         Resource = [
+          # Hub code uses ``{APP_NAME}/tenant/{tenant_id}/agent/{agent_id}/…`` (no env segment); keep env path for any legacy secrets.
           "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${local.project}/${local.environment}/tenant/*",
+          "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${local.project}/tenant/*",
           data.terraform_remote_state.secrets.outputs.internal_service_token_arn,
           data.terraform_remote_state.secrets.outputs.jwt_secret_key_arn,
           data.terraform_remote_state.rds.outputs.db_secret_arn,

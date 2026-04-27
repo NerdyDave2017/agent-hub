@@ -26,6 +26,7 @@ from worker.handlers.aws.apprunner_adapter import AppRunnerAdapter
 from worker.handlers.aws.client_errors import is_not_found_or_gone
 from worker.handlers.aws.ecs import ECSAdapter
 from worker.handlers.base import AbstractJobHandler
+from worker.handlers.deployment_teardown import teardown_deployments_for_agent
 
 log = get_logger(__name__)
 
@@ -227,13 +228,52 @@ class AgentProvisioningHandler(AbstractJobHandler):
             return
 
         if agent.status == AgentStatus.archived:
-            await fail_job_while_running(session, job.id, message="cannot provision archived agent")
+            dep_preview = await _latest_deployment(session, agent.id)
+            can_resume = (
+                dep_preview is not None
+                and dep_preview.status == DeploymentStatus.draining
+            )
+            if not can_resume:
+                await fail_job_while_running(
+                    session,
+                    job.id,
+                    message="agent is archived and cannot be reprovisioned",
+                )
+                return
+        elif agent.status not in (
+            AgentStatus.draft,
+            AgentStatus.provisioning,
+            AgentStatus.active,
+        ):
+            await fail_job_while_running(
+                session,
+                job.id,
+                message="agent cannot be provisioned in its current state",
+            )
             return
 
-        if agent.status == AgentStatus.draft:
+        if agent.status in (AgentStatus.draft, AgentStatus.archived):
             agent.status = AgentStatus.provisioning
         await session.commit()
         await session.refresh(agent)
+
+        agent_id = agent.id
+
+        async def _fail_provision(message: str) -> None:
+            try:
+                await teardown_deployments_for_agent(
+                    session,
+                    settings,
+                    agent_id,
+                    log_job_id=str(job.id),
+                )
+            except Exception:
+                log.exception("provision_failure_teardown_unhandled", job_id=str(job.id))
+            ref = await session.get(Agent, agent_id)
+            if ref is not None:
+                ref.status = AgentStatus.archived
+                await session.commit()
+            await fail_job_while_running(session, job.id, message=message)
 
         dep = await _latest_deployment(session, agent.id)
         if dep is not None and dep.status == DeploymentStatus.live and dep.base_url:
@@ -244,247 +284,229 @@ class AgentProvisioningHandler(AbstractJobHandler):
             log.info("provision_idempotent_live", job_id=str(job.id), agent_id=str(agent.id))
             return
 
-        # --- App Runner: sync URL + status from existing service ARN ---
-        if dep is not None and dep.app_runner_arn:
-            appr_arn = str(dep.app_runner_arn)
-            try:
+        try:
+            # --- App Runner: sync URL + status from existing service ARN ---
+            if dep is not None and dep.app_runner_arn:
+                appr_arn = str(dep.app_runner_arn)
+                try:
 
-                def _describe() -> dict:
-                    return AppRunnerAdapter(settings).describe_service(appr_arn)
+                    def _describe() -> dict:
+                        return AppRunnerAdapter(settings).describe_service(appr_arn)
 
-                raw = await asyncio.to_thread(_describe)
-            except ClientError as exc:
-                if is_not_found_or_gone(exc):
-                    await fail_job_while_running(
-                        session,
-                        job.id,
-                        message=f"App Runner service not found: {dep.app_runner_arn}",
+                    raw = await asyncio.to_thread(_describe)
+                except ClientError as exc:
+                    if is_not_found_or_gone(exc):
+                        await _fail_provision(f"App Runner service not found: {dep.app_runner_arn}")
+                        return
+                    log.exception("provision_apprunner_describe_failed", job_id=str(job.id))
+                    await _fail_provision(str(exc))
+                    return
+                svc = (raw.get("Service") or {}) if isinstance(raw, dict) else {}
+                service_url = svc.get("ServiceUrl")
+                if not service_url:
+                    await _fail_provision("DescribeService missing ServiceUrl")
+                    return
+                dep.base_url = _service_url_to_https(str(service_url))
+                dep.status = DeploymentStatus.live
+                agent.status = AgentStatus.active
+                await session.commit()
+                await complete_job_success(session, job.id, final_step=_STEP_DONE)
+                await session.refresh(job)
+                log.info("provision_apprunner_ok", job_id=str(job.id), agent_id=str(agent.id))
+                return
+
+            # --- ECS: mark live when service exists (URL may be set separately) ---
+            if dep is not None and dep.cluster_arn and dep.service_arn:
+                ecs_cluster = str(dep.cluster_arn)
+                ecs_service = str(dep.service_arn)
+                try:
+
+                    def _ecs_describe() -> dict:
+                        return ECSAdapter(settings).describe_service(cluster=ecs_cluster, service=ecs_service)
+
+                    raw = await asyncio.to_thread(_ecs_describe)
+                except ClientError as exc:
+                    log.exception("provision_ecs_describe_failed", job_id=str(job.id))
+                    await _fail_provision(str(exc))
+                    return
+                failures = raw.get("failures") or []
+                svcs = raw.get("services") or []
+                if failures or not svcs:
+                    await _fail_provision(f"ECS DescribeServices failed: {failures!r}")
+                    return
+                dep.status = DeploymentStatus.live
+                agent.status = AgentStatus.active
+                await session.commit()
+                await complete_job_success(session, job.id, final_step=_STEP_DONE)
+                await session.refresh(job)
+                log.info("provision_ecs_ok", job_id=str(job.id), agent_id=str(agent.id))
+                return
+
+            # --- App Runner: CreateService (IAM + ECR image from env / Terraform outputs wired into task env) ---
+            if (dep is None or not dep.app_runner_arn) and _app_runner_create_ready(settings):
+                image = _resolve_create_image_identifier(settings, job)
+                if not image:
+                    await _fail_provision(
+                        "App Runner create enabled but image identifier missing "
+                        "(payload.image_identifier or APP_RUNNER_CREATE_IMAGE_IDENTIFIER)."
                     )
                     return
-                log.exception("provision_apprunner_describe_failed", job_id=str(job.id))
-                await fail_job_while_running(session, job.id, message=str(exc))
-                return
-            svc = (raw.get("Service") or {}) if isinstance(raw, dict) else {}
-            service_url = svc.get("ServiceUrl")
-            if not service_url:
-                await fail_job_while_running(
-                    session,
-                    job.id,
-                    message="DescribeService missing ServiceUrl",
-                )
-                return
-            dep.base_url = _service_url_to_https(str(service_url))
-            dep.status = DeploymentStatus.live
-            agent.status = AgentStatus.active
-            await session.commit()
-            await complete_job_success(session, job.id, final_step=_STEP_DONE)
-            await session.refresh(job)
-            log.info("provision_apprunner_ok", job_id=str(job.id), agent_id=str(agent.id))
-            return
+                service_name = _app_runner_service_name(agent.id)
+                access = (settings.app_runner_create_access_role_arn or "").strip()
+                inst = (settings.app_runner_create_instance_role_arn or "").strip()
+                port = (settings.app_runner_create_port or "8080").strip()
+                cpu = (settings.app_runner_create_cpu or "1024").strip()
+                memory = (settings.app_runner_create_memory or "2048").strip()
+                health_path = (settings.app_runner_create_health_check_path or "/health").strip()
+                vpc = (settings.app_runner_create_vpc_connector_arn or "").strip() or None
+                asg = (settings.app_runner_create_auto_scaling_configuration_arn or "").strip() or None
+                tags = [
+                    {"Key": "agent_hub_agent_id", "Value": str(agent.id)},
+                    {"Key": "agent_hub_tenant_id", "Value": str(agent.tenant_id)},
+                    {"Key": "agent_hub_agent_type", "Value": agent.agent_type.value},
+                ]
+                runtime_env: dict[str, str] = {
+                    "AGENT_HUB_AGENT_ID": str(agent.id),
+                    "AGENT_HUB_TENANT_ID": str(agent.tenant_id),
+                    "AGENT_HUB_AGENT_TYPE": agent.agent_type.value,
+                }
+                hub = (settings.hub_public_url or "").strip()
+                if hub:
+                    runtime_env["AGENT_HUB_PUBLIC_URL"] = hub
+                    runtime_env["HUB_BASE_URL"] = hub
 
-        # --- ECS: mark live when service exists (URL may be set separately) ---
-        if dep is not None and dep.cluster_arn and dep.service_arn:
-            ecs_cluster = str(dep.cluster_arn)
-            ecs_service = str(dep.service_arn)
-            try:
+                region = (settings.aws_region or "").strip()
+                if region:
+                    runtime_env["AWS_REGION"] = region
 
-                def _ecs_describe() -> dict:
-                    return ECSAdapter(settings).describe_service(cluster=ecs_cluster, service=ecs_service)
+                env_name = os.environ.get("ENVIRONMENT", "").strip()
+                if env_name:
+                    runtime_env["ENVIRONMENT"] = env_name
 
-                raw = await asyncio.to_thread(_ecs_describe)
-            except ClientError as exc:
-                log.exception("provision_ecs_describe_failed", job_id=str(job.id))
-                await fail_job_while_running(session, job.id, message=str(exc))
-                return
-            failures = raw.get("failures") or []
-            svcs = raw.get("services") or []
-            if failures or not svcs:
-                await fail_job_while_running(
-                    session,
-                    job.id,
-                    message=f"ECS DescribeServices failed: {failures!r}",
-                )
-                return
-            dep.status = DeploymentStatus.live
-            agent.status = AgentStatus.active
-            await session.commit()
-            await complete_job_success(session, job.id, final_step=_STEP_DONE)
-            await session.refresh(job)
-            log.info("provision_ecs_ok", job_id=str(job.id), agent_id=str(agent.id))
-            return
+                db_url = (settings.async_database_url or "").strip()
+                if db_url:
+                    runtime_env["DATABASE_URL"] = db_url
 
-        # --- App Runner: CreateService (IAM + ECR image from env / Terraform outputs wired into task env) ---
-        if (dep is None or not dep.app_runner_arn) and _app_runner_create_ready(settings):
-            image = _resolve_create_image_identifier(settings, job)
-            if not image:
-                await fail_job_while_running(
-                    session,
-                    job.id,
-                    message="App Runner create enabled but image identifier missing (payload.image_identifier or APP_RUNNER_CREATE_IMAGE_IDENTIFIER).",
-                )
-                return
-            service_name = _app_runner_service_name(agent.id)
-            access = (settings.app_runner_create_access_role_arn or "").strip()
-            inst = (settings.app_runner_create_instance_role_arn or "").strip()
-            port = (settings.app_runner_create_port or "8080").strip()
-            cpu = (settings.app_runner_create_cpu or "1024").strip()
-            memory = (settings.app_runner_create_memory or "2048").strip()
-            health_path = (settings.app_runner_create_health_check_path or "/health").strip()
-            vpc = (settings.app_runner_create_vpc_connector_arn or "").strip() or None
-            asg = (settings.app_runner_create_auto_scaling_configuration_arn or "").strip() or None
-            tags = [
-                {"Key": "agent_hub_agent_id", "Value": str(agent.id)},
-                {"Key": "agent_hub_tenant_id", "Value": str(agent.tenant_id)},
-                {"Key": "agent_hub_agent_type", "Value": agent.agent_type.value},
-            ]
-            runtime_env: dict[str, str] = {
-                "AGENT_HUB_AGENT_ID": str(agent.id),
-                "AGENT_HUB_TENANT_ID": str(agent.tenant_id),
-                "AGENT_HUB_AGENT_TYPE": agent.agent_type.value,
-            }
-            hub = (settings.hub_public_url or "").strip()
-            if hub:
-                runtime_env["AGENT_HUB_PUBLIC_URL"] = hub
-                runtime_env["HUB_BASE_URL"] = hub
+                lf_host = (settings.langfuse_host or "").strip()
+                if lf_host:
+                    runtime_env["LANGFUSE_HOST"] = lf_host
+                lf_pk = (settings.langfuse_public_key or "").strip()
+                if lf_pk:
+                    runtime_env["LANGFUSE_PUBLIC_KEY"] = lf_pk
+                lf_sk = (settings.langfuse_secret_key or "").strip()
+                if lf_sk:
+                    runtime_env["LANGFUSE_SECRET_KEY"] = lf_sk
 
-            region = (settings.aws_region or "").strip()
-            if region:
-                runtime_env["AWS_REGION"] = region
+                try:
 
-            env_name = os.environ.get("ENVIRONMENT", "").strip()
-            if env_name:
-                runtime_env["ENVIRONMENT"] = env_name
+                    def _create() -> dict:
+                        return AppRunnerAdapter(settings).create_service(
+                            service_name=service_name,
+                            image_identifier=image,
+                            access_role_arn=access,
+                            instance_role_arn=inst,
+                            port=port,
+                            cpu=cpu,
+                            memory=memory,
+                            auto_deployments_enabled=settings.app_runner_create_auto_deployments_enabled,
+                            auto_scaling_configuration_arn=asg,
+                            vpc_connector_arn=vpc,
+                            health_check_path=health_path,
+                            tags=tags,
+                            runtime_environment_variables=runtime_env,
+                        )
 
-            db_url = (settings.async_database_url or "").strip()
-            if db_url:
-                runtime_env["DATABASE_URL"] = db_url
+                    create_raw = await asyncio.to_thread(_create)
+                except ClientError as exc:
+                    log.exception("provision_apprunner_create_failed", job_id=str(job.id))
+                    await _fail_provision(str(exc))
+                    return
 
-            lf_host = (settings.langfuse_host or "").strip()
-            if lf_host:
-                runtime_env["LANGFUSE_HOST"] = lf_host
-            lf_pk = (settings.langfuse_public_key or "").strip()
-            if lf_pk:
-                runtime_env["LANGFUSE_PUBLIC_KEY"] = lf_pk
-            lf_sk = (settings.langfuse_secret_key or "").strip()
-            if lf_sk:
-                runtime_env["LANGFUSE_SECRET_KEY"] = lf_sk
-
-            try:
-
-                def _create() -> dict:
-                    return AppRunnerAdapter(settings).create_service(
-                        service_name=service_name,
-                        image_identifier=image,
-                        access_role_arn=access,
-                        instance_role_arn=inst,
-                        port=port,
-                        cpu=cpu,
-                        memory=memory,
-                        auto_deployments_enabled=settings.app_runner_create_auto_deployments_enabled,
-                        auto_scaling_configuration_arn=asg,
-                        vpc_connector_arn=vpc,
-                        health_check_path=health_path,
-                        tags=tags,
-                        runtime_environment_variables=runtime_env,
+                svc0 = create_raw.get("Service") if isinstance(create_raw, dict) else None
+                if not isinstance(svc0, dict):
+                    await _fail_provision("CreateService returned no Service object")
+                    return
+                service_arn = svc0.get("ServiceArn")
+                if not service_arn:
+                    await _fail_provision("CreateService response missing ServiceArn")
+                    return
+                arn_str = str(service_arn)
+                if dep is None:
+                    dep = Deployment(
+                        agent_id=agent.id,
+                        status=DeploymentStatus.pending,
+                        app_runner_arn=arn_str,
                     )
+                    session.add(dep)
+                else:
+                    dep.app_runner_arn = arn_str
+                    if dep.status == DeploymentStatus.pending:
+                        pass
+                await session.commit()
+                await session.refresh(dep)
 
-                create_raw = await asyncio.to_thread(_create)
-            except ClientError as exc:
-                log.exception("provision_apprunner_create_failed", job_id=str(job.id))
-                await fail_job_while_running(session, job.id, message=str(exc))
-                return
+                try:
+                    final_svc = await _wait_apprunner_running(settings, arn_str)
+                except (TimeoutError, RuntimeError) as exc:
+                    log.exception("provision_apprunner_wait_failed", job_id=str(job.id))
+                    await _fail_provision(str(exc))
+                    return
 
-            svc0 = create_raw.get("Service") if isinstance(create_raw, dict) else None
-            if not isinstance(svc0, dict):
-                await fail_job_while_running(
-                    session,
-                    job.id,
-                    message="CreateService returned no Service object",
-                )
-                return
-            service_arn = svc0.get("ServiceArn")
-            if not service_arn:
-                await fail_job_while_running(
-                    session,
-                    job.id,
-                    message="CreateService response missing ServiceArn",
-                )
-                return
-            arn_str = str(service_arn)
-            if dep is None:
-                dep = Deployment(
-                    agent_id=agent.id,
-                    status=DeploymentStatus.pending,
-                    app_runner_arn=arn_str,
-                )
-                session.add(dep)
-            else:
-                dep.app_runner_arn = arn_str
-                if dep.status == DeploymentStatus.pending:
-                    pass
-            await session.commit()
-            await session.refresh(dep)
-
-            try:
-                final_svc = await _wait_apprunner_running(settings, arn_str)
-            except (TimeoutError, RuntimeError) as exc:
-                log.exception("provision_apprunner_wait_failed", job_id=str(job.id))
-                await fail_job_while_running(session, job.id, message=str(exc))
-                return
-
-            service_url = final_svc.get("ServiceUrl")
-            if not service_url:
-                await fail_job_while_running(
-                    session,
-                    job.id,
-                    message="App Runner RUNNING but DescribeService missing ServiceUrl",
-                )
-                return
-            dep.base_url = _service_url_to_https(str(service_url))
-            dep.status = DeploymentStatus.live
-            agent.status = AgentStatus.active
-            await session.commit()
-            await complete_job_success(session, job.id, final_step=_STEP_DONE)
-            await session.refresh(job)
-            log.info(
-                "provision_apprunner_create_ok",
-                job_id=str(job.id),
-                agent_id=str(agent.id),
-                service_arn=arn_str,
-            )
-            return
-
-        # --- Local / compose: shared agent HTTP root from settings ---
-        base = _fallback_base_url(settings, agent.agent_type)
-        if base:
-            if dep is None:
-                dep = Deployment(
-                    agent_id=agent.id,
-                    status=DeploymentStatus.live,
-                    base_url=base,
-                )
-                session.add(dep)
-            else:
-                dep.base_url = base
+                service_url = final_svc.get("ServiceUrl")
+                if not service_url:
+                    await _fail_provision("App Runner RUNNING but DescribeService missing ServiceUrl")
+                    return
+                dep.base_url = _service_url_to_https(str(service_url))
                 dep.status = DeploymentStatus.live
-            agent.status = AgentStatus.active
-            await session.commit()
-            await complete_job_success(session, job.id, final_step=_STEP_DONE)
-            await session.refresh(job)
-            log.info(
-                "provision_shared_url_ok",
-                job_id=str(job.id),
-                agent_id=str(agent.id),
-                agent_type=agent.agent_type.value,
-            )
-            return
+                agent.status = AgentStatus.active
+                await session.commit()
+                await complete_job_success(session, job.id, final_step=_STEP_DONE)
+                await session.refresh(job)
+                log.info(
+                    "provision_apprunner_create_ok",
+                    job_id=str(job.id),
+                    agent_id=str(agent.id),
+                    service_arn=arn_str,
+                )
+                return
 
-        await fail_job_while_running(
-            session,
-            job.id,
-            message=(
+            # --- Local / compose: shared agent HTTP root from settings ---
+            base = _fallback_base_url(settings, agent.agent_type)
+            if base:
+                if dep is None:
+                    dep = Deployment(
+                        agent_id=agent.id,
+                        status=DeploymentStatus.live,
+                        base_url=base,
+                    )
+                    session.add(dep)
+                else:
+                    dep.base_url = base
+                    dep.status = DeploymentStatus.live
+                agent.status = AgentStatus.active
+                await session.commit()
+                await complete_job_success(session, job.id, final_step=_STEP_DONE)
+                await session.refresh(job)
+                log.info(
+                    "provision_shared_url_ok",
+                    job_id=str(job.id),
+                    agent_id=str(agent.id),
+                    agent_type=agent.agent_type.value,
+                )
+                return
+
+            await _fail_provision(
                 "No runtime for provisioning: set APP_RUNNER_CREATE_* env vars for CreateService, "
                 "or Deployment.app_runner_arn / cluster_arn+service_arn, "
                 "or INCIDENT_TRIAGE_AGENT_URL for incident_triage in dev."
-            ),
-        )
+            )
+            return
+        except Exception as exc:
+            log.exception(
+                "provision_unhandled",
+                job_id=str(job.id),
+                agent_id=str(agent_id),
+            )
+            await _fail_provision(str(exc))
+            return
+

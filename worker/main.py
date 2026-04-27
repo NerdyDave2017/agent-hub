@@ -21,6 +21,7 @@ from agent_hub_core.observability.logging import configure_logging, get_logger
 
 from worker.handlers.registry import handler_for_job_type
 from worker.messaging.metrics_schedule import enqueue_metrics_rollup_for_previous_hour
+from worker.messaging.stale_agent_cleanup import run_stale_provisioning_agent_cleanup
 from worker.sqs_transport.sqs_receive import delete_message, receive_long_poll
 
 log = get_logger(__name__)
@@ -71,6 +72,29 @@ async def _gmail_renewal_scheduler_loop() -> None:
 
         s = get_settings()
         interval = s.google_renewal_scheduler_seconds
+        if interval <= 0:
+            return
+        await asyncio.sleep(interval)
+
+
+async def _stale_agent_cleanup_scheduler_loop() -> None:
+    """Daily-style loop: purge agents stuck in ``provisioning`` past ``STALE_PROVISIONING_AGENT_MAX_AGE_HOURS``."""
+    while True:
+        s = get_settings()
+        interval = s.stale_agent_cleanup_scheduler_seconds
+        if interval <= 0:
+            return
+        try:
+            factory = get_session_factory(s)
+            async with factory() as session:
+                n = await run_stale_provisioning_agent_cleanup(session)
+                if n:
+                    log.info("stale_agent_cleanup_scheduler_tick", agents_removed=n)
+        except Exception:
+            log.exception("stale_agent_cleanup_scheduler_tick_failed")
+
+        s = get_settings()
+        interval = s.stale_agent_cleanup_scheduler_seconds
         if interval <= 0:
             return
         await asyncio.sleep(interval)
@@ -133,6 +157,25 @@ async def _handle_raw_message(settings: Settings, raw: dict[str, object]) -> Non
         tick = json.loads(body)
     except json.JSONDecodeError:
         tick = None
+    if isinstance(tick, dict) and tick.get("kind") == "scheduled_stale_agent_cleanup":
+        try:
+            factory = get_session_factory(settings)
+            async with factory() as session:
+                n = await run_stale_provisioning_agent_cleanup(session)
+            await asyncio.to_thread(delete_message, settings=settings, receipt_handle=receipt)
+            log.info(
+                "scheduled_stale_agent_cleanup_tick_ok",
+                sqs_message_id=message_id,
+                agents_removed=n,
+                source=tick.get("source"),
+            )
+        except Exception:
+            log.exception(
+                "scheduled_stale_agent_cleanup_tick_failed",
+                sqs_message_id=message_id,
+            )
+        return
+
     if isinstance(tick, dict) and tick.get("kind") == "scheduled_metrics_rollup":
         try:
             factory = get_session_factory(settings)
@@ -238,6 +281,9 @@ async def run() -> None:
     rollup_task: asyncio.Task[None] | None = None
     if settings.metrics_rollup_scheduler_seconds > 0:
         rollup_task = asyncio.create_task(_metrics_rollup_scheduler_loop())
+    stale_cleanup_task: asyncio.Task[None] | None = None
+    if settings.stale_agent_cleanup_scheduler_seconds > 0:
+        stale_cleanup_task = asyncio.create_task(_stale_agent_cleanup_scheduler_loop())
     try:
         await _verify_database_connectivity()
         while True:
@@ -257,5 +303,9 @@ async def run() -> None:
             rollup_task.cancel()
             with suppress(asyncio.CancelledError):
                 await rollup_task
+        if stale_cleanup_task is not None:
+            stale_cleanup_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await stale_cleanup_task
         await dispose_engine()
         log.info("worker_stopped", phase="shutdown")

@@ -140,6 +140,7 @@ resource "aws_iam_role_policy" "agent_instance" {
         ]
         Resource = [
           "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${local.project}/${local.environment}/tenant/*",
+          "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${local.project}/tenant/*",
         ]
       },
       {
@@ -291,5 +292,23 @@ resource "aws_cloudwatch_event_target" "gmail_watch_renewal" {
     job_type       = "gmail_watch_renewal"
     correlation_id = "scheduled-gmail-renewal"
     payload        = {}
+  })
+}
+
+resource "aws_cloudwatch_event_rule" "stale_agent_cleanup" {
+  name                = "${local.project}-${local.environment}-stale-agent-cleanup"
+  description         = "Worker tick: purge agents stuck in provisioning past max age"
+  schedule_expression = "cron(0 4 * * ? *)"
+}
+
+resource "aws_cloudwatch_event_target" "stale_agent_cleanup" {
+  rule      = aws_cloudwatch_event_rule.stale_agent_cleanup.name
+  target_id = "StaleAgentCleanupSQS"
+  arn       = data.terraform_remote_state.hub.outputs.hub_queue_arn
+  role_arn  = aws_iam_role.eventbridge_sqs.arn
+
+  input = jsonencode({
+    kind            = "scheduled_stale_agent_cleanup"
+    correlation_id  = "scheduled-stale-agent-cleanup"
   })
 }

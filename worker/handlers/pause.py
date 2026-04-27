@@ -14,8 +14,8 @@ from agent_hub_core.db.job_transitions import (
     complete_job_success,
     fail_job_while_running,
 )
-from agent_hub_core.db.models import Deployment, Job
-from agent_hub_core.domain.enums import DeploymentStatus, JobStatus
+from agent_hub_core.db.models import Agent, Deployment, Job
+from agent_hub_core.domain.enums import AgentStatus, DeploymentStatus, JobStatus
 from agent_hub_core.observability.logging import get_logger
 
 from worker.handlers._idempotency import is_terminal_job
@@ -51,6 +51,11 @@ class AgentPauseHandler(AbstractJobHandler):
 
         if job.agent_id is None:
             await fail_job_while_running(session, job.id, message="agent_pause requires agent_id")
+            return
+
+        agent = await session.get(Agent, job.agent_id)
+        if agent is None:
+            await fail_job_while_running(session, job.id, message="agent row missing")
             return
 
         deps = list(
@@ -107,12 +112,11 @@ class AgentPauseHandler(AbstractJobHandler):
                     await fail_job_while_running(session, job.id, message=str(exc))
                     return
                 dep.status = DeploymentStatus.draining
-            elif dep.base_url:
-                # No AWS binding (shared dev URL) — logical pause so workers skip this deployment.
-                dep.status = DeploymentStatus.draining
             else:
+                # No AWS binding (shared dev URL) or unknown — logical pause so workers skip this deployment.
                 dep.status = DeploymentStatus.draining
 
+        agent.status = AgentStatus.archived
         await session.commit()
         await complete_job_success(session, job.id, final_step=_STEP_DONE)
         await session.refresh(job)

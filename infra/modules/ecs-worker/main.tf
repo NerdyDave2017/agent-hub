@@ -123,6 +123,7 @@ resource "aws_iam_role_policy" "task" {
           var.db_secret_arn,
           var.internal_service_token_arn,
           "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${var.project}/${var.environment}/tenant/*",
+          "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${var.project}/tenant/*",
         ])
       },
       {
@@ -134,7 +135,10 @@ resource "aws_iam_role_policy" "task" {
           "secretsmanager:UpdateSecret",
           "secretsmanager:TagResource",
         ]
-        Resource = "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${var.project}/${var.environment}/tenant/*"
+        Resource = [
+          "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${var.project}/${var.environment}/tenant/*",
+          "arn:aws:secretsmanager:${var.aws_region}:${var.aws_account_id}:secret:${var.project}/tenant/*",
+        ]
       },
       {
         Sid      = "KMSDecrypt"

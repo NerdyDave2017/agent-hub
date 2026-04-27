@@ -198,6 +198,19 @@ class Settings(BaseSettings):
         validation_alias="METRICS_ROLLUP_SCHEDULER_SECONDS",
         description="Worker background loop: enqueue metrics_rollup for each active agent for the previous UTC hour; 0 disables.",
     )
+    stale_agent_cleanup_scheduler_seconds: int = Field(
+        default=86_400,
+        ge=0,
+        validation_alias="STALE_AGENT_CLEANUP_SCHEDULER_SECONDS",
+        description="Worker background loop: remove agents stuck in provisioning past the max-age threshold; 0 disables.",
+    )
+    stale_provisioning_agent_max_age_hours: int = Field(
+        default=48,
+        ge=1,
+        le=24 * 30,
+        validation_alias="STALE_PROVISIONING_AGENT_MAX_AGE_HOURS",
+        description="Agents in provisioning with updated_at older than this are purged by stale-agent cleanup.",
+    )
     langfuse_host: str = Field(
         default="https://cloud.langfuse.com",
         validation_alias="LANGFUSE_HOST",
