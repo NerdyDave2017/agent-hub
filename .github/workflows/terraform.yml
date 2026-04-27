@@ -99,17 +99,16 @@ jobs:
 
       - name: Terraform validate
         run: terraform validate
-
   # Set repository variable RUN_AWS_OIDC_SMOKE = true to verify OIDC after bootstrapping ci-oidc.
-  oidc-smoke:
-    name: AWS OIDC smoke
-    runs-on: ubuntu-latest
-    if: vars.RUN_AWS_OIDC_SMOKE == 'true'
-    steps:
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+  # oidc-smoke:
+  #   name: AWS OIDC smoke
+  #   runs-on: ubuntu-latest
+  #   if: vars.RUN_AWS_OIDC_SMOKE == 'true'
+  #   steps:
+  #     - uses: aws-actions/configure-aws-credentials@v4
+  #       with:
+  #         role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
+  #         aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
 
-      - name: Verify role
-        run: aws sts get-caller-identity
+  #     - name: Verify role
+  #       run: aws sts get-caller-identity

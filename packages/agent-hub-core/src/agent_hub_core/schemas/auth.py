@@ -26,13 +26,13 @@ class TokenResponse(BaseModel):
 
 
 class LoginResponse(TokenResponse):
-    tenant_name: str 
+    tenant_name: str
     user_id: uuid.UUID
     email: str
     display_name: str | None = None
     tenant_id: uuid.UUID | None = None
     tenant_slug: str | None = None
-    tenant_name: str 
+    tenant_name: str | None = None
 
 class GoogleAuthRequest(BaseModel):
     """Frontend sends the Google ID token JWT from Google Sign-In SDK."""
@@ -48,7 +48,7 @@ class GoogleAuthResponse(TokenResponse):
     display_name: str | None = None
     tenant_id: uuid.UUID | None = None
     tenant_slug: str | None = None
-    tenant_name: str 
+    tenant_name: str | None = None
 
 
 class SignupRequest(BaseModel):

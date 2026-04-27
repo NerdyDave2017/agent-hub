@@ -10,6 +10,7 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
 from pydantic import BaseModel, Field as PydanticField
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from agent_hub_core.config.settings import get_settings, Settings
 from agent_hub_core.db.models import Tenant, User
@@ -57,7 +58,9 @@ async def login(session: DbSession, body: LoginRequest) -> LoginResponse:
         )
     email_norm = str(body.email).strip().lower()
     user = await session.scalar(
-        select(User).where(User.email == email_norm)
+        select(User)
+        .options(selectinload(User.tenant))
+        .where(User.email == email_norm)
     )
     if user is None or not user.is_active:
         raise HTTPException(
@@ -82,7 +85,19 @@ async def login(session: DbSession, body: LoginRequest) -> LoginResponse:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
-    return LoginResponse(access_token=token, expires_in=ttl, tenant_name=user.tenant_name, user_id=user.id, email=user.email, display_name=user.display_name, tenant_id=user.tenant_id, tenant_slug=user.tenant_slug)
+    t = user.tenant
+    tenant_name = t.name if t is not None else ""
+    tenant_slug = t.slug if t is not None else None
+    return LoginResponse(
+        access_token=token,
+        expires_in=ttl,
+        tenant_name=tenant_name,
+        user_id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        tenant_id=user.tenant_id,
+        tenant_slug=tenant_slug,
+    )
 
 
 @router.post("/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
@@ -143,6 +158,7 @@ async def signup(session: DbSession, body: SignupRequest) -> SignupResponse:
         expires_in=ttl,
         tenant_id=tenant.id,
         tenant_slug=tenant.slug,
+        tenant_name=tenant.name,
         user_id=user.id,
     )
 
@@ -170,10 +186,10 @@ async def google_auth(session: DbSession, body: GoogleAuthRequest) -> GoogleAuth
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="JWT_SECRET_KEY is not configured",
         )
-    if not (settings.google_signin_client_id or "").strip():
+    if not (settings.google_oauth_client_id or "").strip():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="GOOGLE_SIGNIN_CLIENT_ID is not configured",
+            detail="GOOGLE_OAUTH_CLIENT_ID is not configured",
         )
 
     identity = _extract_google_identity(body.id_token, settings)
@@ -234,6 +250,7 @@ async def google_auth(session: DbSession, body: GoogleAuthRequest) -> GoogleAuth
             display_name=display_name,
             tenant_id=None,
             tenant_slug=None,
+            tenant_name=None,
         )
 
     if not user.is_active:
@@ -267,6 +284,7 @@ async def google_auth(session: DbSession, body: GoogleAuthRequest) -> GoogleAuth
         display_name=user.display_name,
         tenant_id=tenant.id if tenant else None,
         tenant_slug=tenant.slug if tenant else None,
+        tenant_name=tenant.name if tenant else None,
     )
 
 
@@ -457,6 +475,7 @@ async def google_complete_signup(
         expires_in=ttl,
         tenant_id=tenant.id,
         tenant_slug=tenant.slug,
+        tenant_name=tenant.name,
         user_id=user.id,
     )
 
