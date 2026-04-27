@@ -167,6 +167,7 @@ module "apprunner" {
     AWS_REGION                 = var.aws_region
     SQS_QUEUE_URL              = module.sqs.hub_queue_url
     HUB_QUEUE_URL              = module.sqs.hub_queue_url
+    HUB_PUBLIC_URL             = var.hub_public_url
     FRONTEND_URL               = var.frontend_url
     GOOGLE_PUBSUB_TOPIC        = var.google_pubsub_topic
     GCP_PROJECT_ID             = var.gcp_project_id

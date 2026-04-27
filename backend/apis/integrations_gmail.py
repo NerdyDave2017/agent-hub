@@ -56,6 +56,10 @@ def _make_flow():
     if not s.google_oauth_client_id or not s.google_oauth_client_secret:
         raise HTTPException(status_code=503, detail="Gmail OAuth is not configured on the hub")
     redirect_uri = _gmail_oauth_redirect_uri()
+    # Web client uses client_secret at token endpoint — PKCE is optional. If
+    # autogenerate_code_verifier stays True, authorization_url() sets a verifier
+    # on this Flow only; the callback builds a new Flow and fetch_token() then
+    # sends no verifier → Google (invalid_grant) Missing code verifier.
     return Flow.from_client_config(
         client_config={
             "web": {
@@ -68,6 +72,7 @@ def _make_flow():
         },
         scopes=GMAIL_SCOPES,
         redirect_uri=redirect_uri,
+        autogenerate_code_verifier=False,
     )
 
 

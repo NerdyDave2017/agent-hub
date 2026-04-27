@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import secrets
 from typing import Any, Literal
 from urllib.parse import urlencode, urlparse
 from uuid import UUID
@@ -27,6 +29,16 @@ router = APIRouter()
 
 # Bot scopes for incident alerts (``chat.postMessage``). Add more in Slack app config if needed.
 SLACK_BOT_SCOPES = "chat:write"
+
+
+def _slack_pkce_verifier() -> str:
+    """RFC 7636 verifier: 43–128 chars from unreserved charset; ``token_urlsafe`` is a practical subset."""
+    return secrets.token_urlsafe(32)
+
+
+def _slack_pkce_challenge(verifier: str) -> str:
+    digest = hashlib.sha256(verifier.encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest).decode().rstrip("=")
 
 
 def _slack_oauth_redirect_uri() -> str:
@@ -166,6 +178,10 @@ async def slack_oauth_start(
     **Redirect URI:** Slack → *OAuth & Permissions* → *Redirect URLs* must include the exact URL the hub sends
     (see ``SLACK_OAUTH_REDIRECT_URI`` or ``HUB_PUBLIC_URL`` + ``API_V1_PREFIX`` + ``/integrations/slack/oauth/callback``).
     ``http://127.0.0.1:8000/...`` and ``http://localhost:8000/...`` are different strings to Slack.
+
+    **PKCE:** If your Slack app has PKCE enabled, set ``SLACK_OAUTH_PKCE=true`` so the hub sends
+    ``code_challenge`` / ``code_challenge_method`` on authorize and ``code_verifier`` on ``oauth.v2.access``
+    (Slack PKCE token step omits ``client_secret``).
     """
     await tenants_service.require_tenant(session, tenant_id)
     await agents_service.require_agent(session, tenant_id, agent_id)
@@ -176,6 +192,9 @@ async def slack_oauth_start(
     state_payload: dict[str, Any] = {"tenant_id": str(tenant_id), "agent_id": str(agent_id)}
     if return_mode == "post_message":
         state_payload["post_message"] = True
+    if s.slack_oauth_pkce:
+        verifier = _slack_pkce_verifier()
+        state_payload["code_verifier"] = verifier
     state = base64.urlsafe_b64encode(json.dumps(state_payload).encode()).decode()
     redirect_uri = _slack_oauth_redirect_uri()
     params = {
@@ -184,6 +203,11 @@ async def slack_oauth_start(
         "redirect_uri": redirect_uri,
         "state": state,
     }
+    if s.slack_oauth_pkce:
+        v = state_payload.get("code_verifier")
+        if isinstance(v, str) and v:
+            params["code_challenge"] = _slack_pkce_challenge(v)
+            params["code_challenge_method"] = "S256"
     auth_url = f"https://slack.com/oauth/v2/authorize?{urlencode(params)}"
     if response_mode == "json":
         return JSONResponse(SlackOAuthStartJson(authorization_url=auth_url).model_dump())
@@ -234,15 +258,26 @@ async def slack_oauth_callback(
         raise HTTPException(status_code=503, detail="Slack OAuth is not configured on the hub")
 
     redirect_uri = _slack_oauth_redirect_uri()
+    code_verifier = state_data.get("code_verifier")
+    if isinstance(code_verifier, str) and code_verifier.strip():
+        # Slack PKCE: token exchange uses verifier, not client_secret (see Slack Using PKCE).
+        token_body: dict[str, str] = {
+            "client_id": s.slack_oauth_client_id,
+            "code": code,
+            "redirect_uri": redirect_uri,
+            "code_verifier": code_verifier.strip(),
+        }
+    else:
+        token_body = {
+            "client_id": s.slack_oauth_client_id,
+            "client_secret": s.slack_oauth_client_secret,
+            "code": code,
+            "redirect_uri": redirect_uri,
+        }
     async with httpx.AsyncClient(timeout=30.0) as client:
         resp = await client.post(
             "https://slack.com/api/oauth.v2.access",
-            data={
-                "client_id": s.slack_oauth_client_id,
-                "client_secret": s.slack_oauth_client_secret,
-                "code": code,
-                "redirect_uri": redirect_uri,
-            },
+            data=token_body,
         )
     try:
         data: dict[str, Any] = resp.json()

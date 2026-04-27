@@ -25,6 +25,12 @@ variable "frontend_url" {
   type = string
 }
 
+variable "hub_public_url" {
+  type        = string
+  default     = "http://127.0.0.1:8000"
+  description = "Public base URL of the hub API (HUB_PUBLIC_URL). App Runner / CI should set this to the real https service URL (terraform output hub_service_url) or a stable custom domain; default is for targeted applies that skip the service."
+}
+
 variable "google_pubsub_topic" {
   type = string
 }

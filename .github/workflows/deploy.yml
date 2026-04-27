@@ -256,6 +256,39 @@ jobs:
           aws-account-id: ${{ env.AWS_ACCOUNT_ID }}
           hub-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_HUB }}:latest
           worker-role-arn: ""
+          hub-public-url: ${{ vars.TF_VAR_hub_public_url != '' &&
+            vars.TF_VAR_hub_public_url || 'http://127.0.0.1:8000' }}
+          frontend-url: ${{ vars.TF_VAR_frontend_url }}
+          google-pubsub-topic: ${{ vars.TF_VAR_google_pubsub_topic }}
+          gcp-project-id: ${{ vars.TF_VAR_gcp_project_id }}
+          google-oauth-client-id: ${{ secrets.TF_VAR_google_oauth_client_id }}
+          google-oauth-client-secret: ${{ secrets.TF_VAR_google_oauth_client_secret }}
+          google-webhook-secret: ${{ secrets.TF_VAR_google_webhook_secret }}
+          slack-oauth-client-id: ${{ secrets.TF_VAR_slack_oauth_client_id }}
+          slack-oauth-client-secret: ${{ secrets.TF_VAR_slack_oauth_client_secret }}
+          langfuse-host: ${{ vars.TF_VAR_langfuse_host || 'https://cloud.langfuse.com' }}
+
+      - name: Read hub App Runner URL for HUB_PUBLIC_URL
+        id: hub_runner_url
+        shell: bash
+        working-directory: infra/hub
+        run: |
+          url=$(terraform output -raw hub_service_url)
+          if [[ ! "$url" =~ ^https:// ]]; then
+            url="https://$url"
+          fi
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Apply hub (sync HUB_PUBLIC_URL to App Runner URL)
+        if: ${{ vars.TF_VAR_hub_public_url == '' }}
+        uses: ./.github/actions/tf-apply-hub
+        with:
+          environment: ${{ needs.provision.outputs.environment }}
+          aws-region: ${{ env.AWS_REGION }}
+          aws-account-id: ${{ env.AWS_ACCOUNT_ID }}
+          hub-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_HUB }}:latest
+          worker-role-arn: ""
+          hub-public-url: ${{ steps.hub_runner_url.outputs.url }}
           frontend-url: ${{ vars.TF_VAR_frontend_url }}
           google-pubsub-topic: ${{ vars.TF_VAR_google_pubsub_topic }}
           gcp-project-id: ${{ vars.TF_VAR_gcp_project_id }}
@@ -296,6 +329,8 @@ jobs:
           aws-account-id: ${{ env.AWS_ACCOUNT_ID }}
           hub-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_HUB }}:latest
           worker-role-arn: ${{ steps.worker_role.outputs.arn }}
+          hub-public-url: ${{ vars.TF_VAR_hub_public_url != '' &&
+            vars.TF_VAR_hub_public_url || steps.hub_runner_url.outputs.url }}
           frontend-url: ${{ vars.TF_VAR_frontend_url }}
           google-pubsub-topic: ${{ vars.TF_VAR_google_pubsub_topic }}
           gcp-project-id: ${{ vars.TF_VAR_gcp_project_id }}

@@ -83,9 +83,11 @@ class Settings(BaseSettings):
 
     # --- Google (Workspace) mail: Pub/Sub push + OAuth (hub — see gmail-pubsub-implementation.md) ---
     hub_public_url: str = Field(
-        default="http://127.0.0.1:8000",
+        ...,
+        min_length=1,
         validation_alias=AliasChoices("HUB_PUBLIC_URL", "HUB_BASE_URL"),
-        description="Public hub base URL (OAuth, agent runtime env AGENT_HUB_PUBLIC_URL). ECS often sets HUB_BASE_URL.",
+        description="Public hub base URL (OAuth redirects, AGENT_HUB_PUBLIC_URL). Set in .env for local dev; "
+        "App Runner injects HUB_PUBLIC_URL from Terraform (often the service URL or TF_VAR_hub_public_url / GitHub var).",
     )
     google_pubsub_topic: str = Field(
         default="",
@@ -124,6 +126,12 @@ class Settings(BaseSettings):
         validation_alias="SLACK_OAUTH_PARENT_ORIGIN",
         description="Origin sent to window.opener.postMessage after Slack OAuth when return_mode=post_message "
         "(e.g. http://localhost:3000). Defaults to the origin of HUB_PUBLIC_URL.",
+    )
+    slack_oauth_pkce: bool = Field(
+        default=False,
+        validation_alias="SLACK_OAUTH_PKCE",
+        description="Set true when the Slack app has Proof Key for Code Exchange (PKCE) enabled. "
+        "The hub then sends code_challenge on authorize and code_verifier on oauth.v2.access (no client_secret on that call, per Slack).",
     )
     google_webhook_secret: str = Field(
         default="",

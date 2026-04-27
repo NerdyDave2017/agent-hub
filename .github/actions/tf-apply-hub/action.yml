@@ -44,6 +44,10 @@ inputs:
     required: false
     description: Langfuse host.
     default: "https://cloud.langfuse.com"
+  hub-public-url:
+    required: false
+    description: Hub API public URL (TF_VAR_hub_public_url). Use the App Runner https URL or a custom domain; avoid empty (Terraform would treat TF_VAR as blank).
+    default: "http://127.0.0.1:8000"
 runs:
   using: composite
   steps:
@@ -66,3 +70,4 @@ runs:
         TF_VAR_slack_oauth_client_id: ${{ inputs.slack-oauth-client-id }}
         TF_VAR_slack_oauth_client_secret: ${{ inputs.slack-oauth-client-secret }}
         TF_VAR_langfuse_host: ${{ inputs.langfuse-host }}
+        TF_VAR_hub_public_url: ${{ inputs.hub-public-url }}

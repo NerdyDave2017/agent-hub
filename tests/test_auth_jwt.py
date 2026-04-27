@@ -13,7 +13,8 @@ from services import auth_service
 
 
 @pytest.fixture(autouse=True)
-def _clear_settings_cache() -> None:
+def _clear_settings_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HUB_PUBLIC_URL", "http://127.0.0.1:8000")
     yield
     get_settings.cache_clear()
 

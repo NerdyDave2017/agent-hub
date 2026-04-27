@@ -30,7 +30,7 @@ Use this before and after applying Terraform and cutting traffic. Full order and
 | W3 | Worker container receives **`AGENT_ECR_ACCESS_ROLE_ARN`**, **`AGENT_INSTANCE_ROLE_ARN`** (aliases in Python `Settings`) | `ecs-worker` module |
 | W4 | Worker receives **`APP_RUNNER_CREATE_IMAGE_IDENTIFIER`** (built from `ecr_registry` + repo + `agent_image_tag`) | `worker/main.tf` → `ecs-worker` **`extra_environment`** |
 | W5 | Worker receives **`APP_RUNNER_CREATE_VPC_CONNECTOR_ARN`** from VPC state | Same **`extra_environment`** concat |
-| W6 | **`HUB_BASE_URL`** set on worker (same value as hub URL) | Feeds `hub_public_url` / `AGENT_HUB_PUBLIC_URL` in provision code via `AliasChoices` |
+| W6 | Hub App Runner has **`HUB_PUBLIC_URL`** (`infra/hub` var `hub_public_url`; deploy workflow syncs from `terraform output hub_service_url` when GitHub var `TF_VAR_hub_public_url` is unset). Worker has **`HUB_BASE_URL`** (same logical URL) | OAuth redirects + `AGENT_HUB_PUBLIC_URL` in provision (`AliasChoices` with `HUB_PUBLIC_URL`) |
 
 ## After `terraform apply` on worker (confidence: **high**)
 
