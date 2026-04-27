@@ -211,7 +211,7 @@ resource "aws_ecs_task_definition" "worker" {
         { name = "HUB_QUEUE_URL", value = var.hub_queue_url },
         { name = "HUB_BASE_URL", value = var.hub_base_url },
         { name = "GCP_PROJECT_ID", value = var.gcp_project_id },
-        { name = "GMAIL_PUBSUB_TOPIC", value = var.gmail_pubsub_topic },
+        { name = "GOOGLE_PUBSUB_TOPIC", value = var.google_pubsub_topic },
         { name = "ECR_REGISTRY", value = var.ecr_registry },
         { name = "AGENT_INSTANCE_ROLE_ARN", value = var.agent_instance_role_arn },
         { name = "AGENT_ECR_ACCESS_ROLE_ARN", value = var.agent_ecr_access_role_arn },

@@ -25,8 +25,17 @@ class TokenResponse(BaseModel):
     )
 
 
+class LoginResponse(TokenResponse):
+    tenant_name: str 
+    user_id: uuid.UUID
+    email: str
+    display_name: str | None = None
+    tenant_id: uuid.UUID | None = None
+    tenant_slug: str | None = None
+    tenant_name: str 
+
 class GoogleAuthRequest(BaseModel):
-    """Frontend sends the credential (ID token JWT) from Google Sign-In SDK."""
+    """Frontend sends the Google ID token JWT from Google Sign-In SDK."""
 
     id_token: str = Field(..., min_length=1, description="Google ID token (credential) from frontend")
 
@@ -39,6 +48,7 @@ class GoogleAuthResponse(TokenResponse):
     display_name: str | None = None
     tenant_id: uuid.UUID | None = None
     tenant_slug: str | None = None
+    tenant_name: str 
 
 
 class SignupRequest(BaseModel):
@@ -61,3 +71,4 @@ class SignupResponse(TokenResponse):
     tenant_id: uuid.UUID
     tenant_slug: str
     user_id: uuid.UUID
+    tenant_name: str 

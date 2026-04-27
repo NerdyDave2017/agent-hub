@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 
 from fastapi import APIRouter, HTTPException, status
 from google.auth.transport import requests as google_requests
@@ -10,7 +11,7 @@ from google.oauth2 import id_token as google_id_token
 from pydantic import BaseModel, Field as PydanticField
 from sqlalchemy import select
 
-from agent_hub_core.config.settings import get_settings
+from agent_hub_core.config.settings import get_settings, Settings
 from agent_hub_core.db.models import Tenant, User
 from agent_hub_core.domain.exceptions import TenantSlugConflict
 from agent_hub_core.observability.logging import get_logger
@@ -18,6 +19,7 @@ from agent_hub_core.schemas.auth import (
     GoogleAuthRequest,
     GoogleAuthResponse,
     LoginRequest,
+    LoginResponse,
     SignupRequest,
     SignupResponse,
     TokenResponse,
@@ -27,6 +29,7 @@ from agent_hub_core.schemas.tenant import slug_from_workspace_name
 from apis.dependencies import DbSession
 from services import auth_service, tenants_service
 
+
 log = get_logger(__name__)
 
 router = APIRouter()
@@ -34,8 +37,17 @@ router = APIRouter()
 _SIGNUP_SLUG_ATTEMPTS = 12
 
 
-@router.post("/login", response_model=TokenResponse)
-async def login(session: DbSession, body: LoginRequest) -> TokenResponse:
+@dataclass(frozen=True)
+class _GoogleIdentity:
+    """Normalized user identity extracted from a verified Google ID token."""
+
+    sub: str
+    email: str
+    display_name: str
+
+
+@router.post("/login", response_model=LoginResponse)
+async def login(session: DbSession, body: LoginRequest) -> LoginResponse:
     """Mint a short-lived JWT. Requires ``users.password_hash`` and ``JWT_SECRET_KEY``."""
     settings = get_settings()
     if not (settings.jwt_secret_key or "").strip():
@@ -50,12 +62,12 @@ async def login(session: DbSession, body: LoginRequest) -> TokenResponse:
     if user is None or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid email or password",
+            detail="Email or password is incorrect.",
         )
     if not user.password_hash or not auth_service.verify_password(body.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid email or password",
+            detail="Email or password is incorrect.",
         )
     try:
         token, ttl = auth_service.create_access_token(
@@ -70,7 +82,7 @@ async def login(session: DbSession, body: LoginRequest) -> TokenResponse:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=str(exc),
         ) from exc
-    return TokenResponse(access_token=token, expires_in=ttl)
+    return LoginResponse(access_token=token, expires_in=ttl, tenant_name=user.tenant_name, user_id=user.id, email=user.email, display_name=user.display_name, tenant_id=user.tenant_id, tenant_slug=user.tenant_slug)
 
 
 @router.post("/signup", response_model=SignupResponse, status_code=status.HTTP_201_CREATED)
@@ -144,9 +156,9 @@ async def google_auth(session: DbSession, body: GoogleAuthRequest) -> GoogleAuth
     """
     Authenticate or register a user via Google Sign-In.
 
-    The frontend sends the ``credential`` (ID token) it receives from the Google
+    The frontend sends the ``id_token`` it receives from the Google
     Sign-In SDK. The backend verifies it against Google's public keys and either
-    finds the existing user or creates a new one.
+    finds the existing user or creates a new one based on verified token claims.
 
     **New users** are created *without* a tenant. The response will have
     ``has_workspace=False`` — the frontend must redirect to a "create workspace"
@@ -164,34 +176,10 @@ async def google_auth(session: DbSession, body: GoogleAuthRequest) -> GoogleAuth
             detail="GOOGLE_SIGNIN_CLIENT_ID is not configured",
         )
 
-    # 1. Verify Google ID token ------------------------------------------
-    try:
-        id_info = google_id_token.verify_oauth2_token(
-            body.id_token,
-            google_requests.Request(),
-            audience=settings.google_signin_client_id,
-        )
-    except ValueError as exc:
-        log.warning("google_id_token_invalid", error=str(exc))
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid Google ID token",
-        ) from exc
-
-    google_sub: str = id_info.get("sub", "")
-    email: str = (id_info.get("email") or "").strip().lower()
-    name: str = (id_info.get("name") or email.split("@")[0]).strip()
-
-    if not google_sub or not email:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Google token missing required claims (sub, email)",
-        )
-    if not id_info.get("email_verified", False):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Google email is not verified",
-        )
+    identity = _extract_google_identity(body.id_token, settings)
+    google_sub = identity.sub
+    email = identity.email
+    display_name = identity.display_name
 
     # 2. Find or create user --------------------------------------------
     # First try by google_sub (stable across email changes)
@@ -207,22 +195,21 @@ async def google_auth(session: DbSession, body: GoogleAuthRequest) -> GoogleAuth
         )
         if user is not None:
             # Link Google identity to existing account
+            changed = False
             user.google_sub = google_sub
+            changed = True
             if user.auth_provider == "password":
                 user.auth_provider = "google"
-            await session.commit()
-            await session.refresh(user)
+                changed = True
+            if not (user.display_name or "").strip():
+                user.display_name = display_name
+                changed = True
+            if changed:
+                await session.commit()
+                await session.refresh(user)
 
     if user is None:
         # Brand-new user — create without a tenant
-        user = User(
-            email=email,
-            display_name=name,
-            auth_provider="google",
-            google_sub=google_sub,
-            is_active=True,
-            # tenant_id will be set when the user creates a workspace
-        )
         # We need a tenant_id — create a placeholder-free user.
         # Since User.tenant_id is NOT nullable in the model, we must handle
         # the "no workspace yet" state differently. We'll check if tenant exists.
@@ -235,7 +222,7 @@ async def google_auth(session: DbSession, body: GoogleAuthRequest) -> GoogleAuth
         token, ttl = _mint_google_provisional_token(
             google_sub=google_sub,
             email=email,
-            name=name,
+            name=display_name,
             settings=settings,
         )
         return GoogleAuthResponse(
@@ -244,7 +231,7 @@ async def google_auth(session: DbSession, body: GoogleAuthRequest) -> GoogleAuth
             has_workspace=False,
             user_id=uuid.UUID(int=0),  # placeholder — no persisted user yet
             email=email,
-            display_name=name,
+            display_name=display_name,
             tenant_id=None,
             tenant_slug=None,
         )
@@ -252,7 +239,7 @@ async def google_auth(session: DbSession, body: GoogleAuthRequest) -> GoogleAuth
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="account is disabled",
+            detail="Your account is disabled. Contact support if you need help.",
         )
 
     # 3. Existing user with workspace — mint full JWT --------------------
@@ -281,6 +268,41 @@ async def google_auth(session: DbSession, body: GoogleAuthRequest) -> GoogleAuth
         tenant_id=tenant.id if tenant else None,
         tenant_slug=tenant.slug if tenant else None,
     )
+
+
+def _extract_google_identity(id_token: str, settings: Settings) -> _GoogleIdentity:
+    """Verify Google ID token and return normalized identity claims."""
+    try:
+        id_info = google_id_token.verify_oauth2_token(
+            id_token,
+            google_requests.Request(),
+            audience=settings.google_oauth_client_id,
+        )
+    except ValueError as exc:
+        log.warning("google_id_token_invalid", error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google sign-in failed. Please try again.",
+        ) from exc
+
+    google_sub: str = (id_info.get("sub") or "").strip()
+    email: str = (id_info.get("email") or "").strip().lower()
+    display_name: str = (
+        (id_info.get("name") or "").strip()
+        or (id_info.get("given_name") or "").strip()
+        or email.split("@")[0]
+    )
+    if not google_sub or not email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Google sign-in could not be verified. Please try again.",
+        )
+    if not id_info.get("email_verified", False):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Your Google email is not verified. Verify it with Google and try again.",
+        )
+    return _GoogleIdentity(sub=google_sub, email=email, display_name=display_name)
 
 
 def _mint_google_provisional_token(
@@ -358,18 +380,18 @@ async def google_complete_signup(
             secret,
             algorithms=[settings.jwt_algorithm],
             issuer=settings.jwt_issuer,
-            options={"require": ["exp", "sub"]},
+            options={"require": ["exp", "sub", "email"]},
         )
     except InvalidTokenError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid or expired provisional token — please sign in with Google again",
+            detail="Your Google sign-up session expired. Please continue with Google again.",
         ) from None
 
     if payload.get("scope") != "google_signup":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="token is not a Google signup provisional token",
+            detail="Your sign-up session is invalid. Please continue with Google again.",
         )
 
     google_sub = payload["sub"]
@@ -381,7 +403,7 @@ async def google_complete_signup(
     if existing is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="account already exists — use POST /auth/google to sign in",
+            detail="An account with this Google login already exists. Please sign in.",
         )
 
     # Create tenant + user

@@ -20,9 +20,9 @@ inputs:
   gcp-project-id:
     required: true
     description: GCP project ID.
-  gmail-pubsub-topic:
+  google-pubsub-topic:
     required: true
-    description: Gmail pub/sub topic.
+    description: Google pub/sub topic.
   ecr-registry:
     required: true
     description: ECR registry host.
@@ -52,7 +52,7 @@ runs:
         TF_VAR_worker_image_uri: ${{ inputs.worker-image-uri }}
         TF_VAR_worker_deploy_revision: ${{ inputs.worker-deploy-revision }}
         TF_VAR_gcp_project_id: ${{ inputs.gcp-project-id }}
-        TF_VAR_gmail_pubsub_topic: ${{ inputs.gmail-pubsub-topic }}
+        TF_VAR_google_pubsub_topic: ${{ inputs.google-pubsub-topic }}
         TF_VAR_ecr_registry: ${{ inputs.ecr-registry }}
         TF_VAR_langfuse_host: ${{ inputs.langfuse-host }}
         TF_VAR_langfuse_public_key: ${{ inputs.langfuse-public-key }}

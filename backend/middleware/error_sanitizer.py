@@ -82,7 +82,7 @@ _FIELD_LABELS: dict[str, str] = {
     "display_name": "Display name",
     "workspace_name": "Workspace name",
     "tenant_slug": "Workspace URL",
-    "id_token": "Google credential",
+    "id_token": "Google sign-in token",
     "provisional_token": "Signup token",
 }
 
@@ -213,10 +213,15 @@ def register_error_handlers(app: FastAPI) -> None:
         )
 
         sanitized = [_humanize_error(e) for e in raw_errors]
+        # Keep a top-level detail string for clients that only parse `detail`.
+        detail = " ".join(e["message"] for e in sanitized if e.get("message")).strip()
 
         return JSONResponse(
             status_code=422,
-            content={"errors": sanitized},
+            content={
+                "detail": detail or "Request validation failed.",
+                "errors": sanitized,
+            },
         )
 
     # -- 5xx HTTP exceptions: generic message + error ref -------------------

@@ -73,11 +73,11 @@ jobs:
       TF_VAR_hub_image_uri: "000000000000.dkr.ecr.us-east-1.amazonaws.com/agent-hub/hub:validate"
       TF_VAR_worker_image_uri: "000000000000.dkr.ecr.us-east-1.amazonaws.com/agent-hub/worker:validate"
       TF_VAR_frontend_url: https://example.com
-      TF_VAR_gmail_pubsub_topic: projects/ci/topics/t
+      TF_VAR_google_pubsub_topic: projects/ci/topics/t
       TF_VAR_gcp_project_id: ci-project
-      TF_VAR_gmail_oauth_client_id_arn: arn:aws:secretsmanager:us-east-1:000000000000:secret:agent-hub/ci/gmail/oauth-client-id
-      TF_VAR_gmail_oauth_client_secret_arn: arn:aws:secretsmanager:us-east-1:000000000000:secret:agent-hub/ci/gmail/oauth-client-secret
-      TF_VAR_gmail_webhook_secret_arn: arn:aws:secretsmanager:us-east-1:000000000000:secret:agent-hub/ci/gmail/webhook-secret
+      TF_VAR_google_oauth_client_id: ci-google-oauth-client-id
+      TF_VAR_google_oauth_client_secret: ci-google-oauth-client-secret
+      TF_VAR_google_webhook_secret: ci-google-webhook-secret
       TF_VAR_slack_oauth_client_id_arn: arn:aws:secretsmanager:us-east-1:000000000000:secret:agent-hub/ci/slack/oauth-client-id
       TF_VAR_slack_oauth_client_secret_arn: arn:aws:secretsmanager:us-east-1:000000000000:secret:agent-hub/ci/slack/oauth-client-secret
       TF_VAR_ecr_registry: "000000000000.dkr.ecr.us-east-1.amazonaws.com"

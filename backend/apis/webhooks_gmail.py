@@ -25,7 +25,7 @@ router = APIRouter()
 
 def _verify_pubsub_token(request: Request) -> bool:
     settings = get_settings()
-    expected = (settings.gmail_webhook_secret or "").strip()
+    expected = (settings.google_webhook_secret or "").strip()
     if not expected:
         return True
     token = request.query_params.get("token", "")

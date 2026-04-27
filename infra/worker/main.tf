@@ -186,7 +186,7 @@ module "worker" {
   internal_service_token_arn = data.terraform_remote_state.secrets.outputs.internal_service_token_arn
   hub_base_url               = data.terraform_remote_state.hub.outputs.hub_service_url
   gcp_project_id             = var.gcp_project_id
-  gmail_pubsub_topic         = var.gmail_pubsub_topic
+  google_pubsub_topic        = var.google_pubsub_topic
   ecr_registry               = var.ecr_registry
   agent_ecr_access_role_arn  = aws_iam_role.agent_ecr_access.arn
   agent_instance_role_arn    = aws_iam_role.agent_instance.arn

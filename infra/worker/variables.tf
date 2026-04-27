@@ -25,7 +25,7 @@ variable "gcp_project_id" {
   type = string
 }
 
-variable "gmail_pubsub_topic" {
+variable "google_pubsub_topic" {
   type = string
 }
 

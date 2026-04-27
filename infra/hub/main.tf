@@ -163,19 +163,19 @@ module "apprunner" {
   instance_policy_json = "{}"
 
   environment_variables = {
-    ENVIRONMENT               = local.environment
-    AWS_REGION                = var.aws_region
-    SQS_QUEUE_URL             = module.sqs.hub_queue_url
-    HUB_QUEUE_URL             = module.sqs.hub_queue_url
-    FRONTEND_URL              = var.frontend_url
-    GMAIL_PUBSUB_TOPIC        = var.gmail_pubsub_topic
-    GCP_PROJECT_ID            = var.gcp_project_id
-    GMAIL_OAUTH_CLIENT_ID     = var.gmail_oauth_client_id
-    GMAIL_OAUTH_CLIENT_SECRET = var.gmail_oauth_client_secret
-    SLACK_OAUTH_CLIENT_ID     = var.slack_oauth_client_id
-    SLACK_OAUTH_CLIENT_SECRET = var.slack_oauth_client_secret
-    GMAIL_WEBHOOK_SECRET      = var.gmail_webhook_secret
-    LANGFUSE_HOST             = var.langfuse_host
+    ENVIRONMENT                = local.environment
+    AWS_REGION                 = var.aws_region
+    SQS_QUEUE_URL              = module.sqs.hub_queue_url
+    HUB_QUEUE_URL              = module.sqs.hub_queue_url
+    FRONTEND_URL               = var.frontend_url
+    GOOGLE_PUBSUB_TOPIC        = var.google_pubsub_topic
+    GCP_PROJECT_ID             = var.gcp_project_id
+    GOOGLE_OAUTH_CLIENT_ID     = var.google_oauth_client_id
+    GOOGLE_OAUTH_CLIENT_SECRET = var.google_oauth_client_secret
+    SLACK_OAUTH_CLIENT_ID      = var.slack_oauth_client_id
+    SLACK_OAUTH_CLIENT_SECRET  = var.slack_oauth_client_secret
+    GOOGLE_WEBHOOK_SECRET      = var.google_webhook_secret
+    LANGFUSE_HOST              = var.langfuse_host
   }
 
   environment_secrets = {

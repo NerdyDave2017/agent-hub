@@ -19,21 +19,21 @@ inputs:
   frontend-url:
     required: true
     description: Frontend URL.
-  gmail-pubsub-topic:
+  google-pubsub-topic:
     required: true
-    description: Gmail pub/sub topic.
+    description: Google pub/sub topic.
   gcp-project-id:
     required: true
     description: GCP project ID.
-  gmail-oauth-client-id:
+  google-oauth-client-id:
     required: true
-    description: Gmail OAuth client ID.
-  gmail-oauth-client-secret:
+    description: Google OAuth client ID.
+  google-oauth-client-secret:
     required: true
-    description: Gmail OAuth client secret.
-  gmail-webhook-secret:
+    description: Google OAuth client secret.
+  google-webhook-secret:
     required: true
-    description: Gmail webhook secret.
+    description: Google webhook secret.
   slack-oauth-client-id:
     required: true
     description: Slack OAuth client ID.
@@ -58,11 +58,11 @@ runs:
         TF_VAR_hub_image_uri: ${{ inputs.hub-image-uri }}
         TF_VAR_worker_role_arn: ${{ inputs.worker-role-arn }}
         TF_VAR_frontend_url: ${{ inputs.frontend-url }}
-        TF_VAR_gmail_pubsub_topic: ${{ inputs.gmail-pubsub-topic }}
+        TF_VAR_google_pubsub_topic: ${{ inputs.google-pubsub-topic }}
         TF_VAR_gcp_project_id: ${{ inputs.gcp-project-id }}
-        TF_VAR_gmail_oauth_client_id: ${{ inputs.gmail-oauth-client-id }}
-        TF_VAR_gmail_oauth_client_secret: ${{ inputs.gmail-oauth-client-secret }}
-        TF_VAR_gmail_webhook_secret: ${{ inputs.gmail-webhook-secret }}
+        TF_VAR_google_oauth_client_id: ${{ inputs.google-oauth-client-id }}
+        TF_VAR_google_oauth_client_secret: ${{ inputs.google-oauth-client-secret }}
+        TF_VAR_google_webhook_secret: ${{ inputs.google-webhook-secret }}
         TF_VAR_slack_oauth_client_id: ${{ inputs.slack-oauth-client-id }}
         TF_VAR_slack_oauth_client_secret: ${{ inputs.slack-oauth-client-secret }}
         TF_VAR_langfuse_host: ${{ inputs.langfuse-host }}

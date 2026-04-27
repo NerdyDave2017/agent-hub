@@ -49,11 +49,11 @@ env:
   TF_VAR_hub_image_uri: ${{ vars.TF_VAR_hub_image_uri }}
   TF_VAR_worker_image_uri: ${{ vars.TF_VAR_worker_image_uri }}
   TF_VAR_frontend_url: ${{ vars.TF_VAR_frontend_url }}
-  TF_VAR_gmail_pubsub_topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
+  TF_VAR_google_pubsub_topic: ${{ vars.TF_VAR_google_pubsub_topic }}
   TF_VAR_gcp_project_id: ${{ vars.TF_VAR_gcp_project_id }}
-  TF_VAR_gmail_oauth_client_id_arn: ${{ vars.TF_VAR_gmail_oauth_client_id_arn }}
-  TF_VAR_gmail_oauth_client_secret_arn: ${{ vars.TF_VAR_gmail_oauth_client_secret_arn }}
-  TF_VAR_gmail_webhook_secret_arn: ${{ vars.TF_VAR_gmail_webhook_secret_arn }}
+  TF_VAR_google_oauth_client_id: ${{ secrets.TF_VAR_google_oauth_client_id }}
+  TF_VAR_google_oauth_client_secret: ${{ secrets.TF_VAR_google_oauth_client_secret }}
+  TF_VAR_google_webhook_secret: ${{ secrets.TF_VAR_google_webhook_secret }}
   TF_VAR_slack_oauth_client_id_arn: ${{ vars.TF_VAR_slack_oauth_client_id_arn }}
   TF_VAR_slack_oauth_client_secret_arn: ${{ vars.TF_VAR_slack_oauth_client_secret_arn }}
   TF_VAR_ecr_registry: ${{ vars.TF_VAR_ecr_registry }}

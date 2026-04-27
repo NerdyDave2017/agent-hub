@@ -79,8 +79,8 @@ jobs:
       - name: Guard required config
         shell: bash
         run: |
-          test -n "${{ secrets.TF_VAR_gmail_oauth_client_id }}" || { echo "::error::Missing secret TF_VAR_gmail_oauth_client_id"; exit 1; }
-          test -n "${{ secrets.TF_VAR_gmail_oauth_client_secret }}" || { echo "::error::Missing secret TF_VAR_gmail_oauth_client_secret"; exit 1; }
+          test -n "${{ secrets.TF_VAR_google_oauth_client_id }}" || { echo "::error::Missing secret TF_VAR_google_oauth_client_id"; exit 1; }
+          test -n "${{ secrets.TF_VAR_google_oauth_client_secret }}" || { echo "::error::Missing secret TF_VAR_google_oauth_client_secret"; exit 1; }
           test -n "${{ secrets.TF_VAR_slack_oauth_client_id }}" || { echo "::error::Missing secret TF_VAR_slack_oauth_client_id"; exit 1; }
           test -n "${{ secrets.TF_VAR_slack_oauth_client_secret }}" || { echo "::error::Missing secret TF_VAR_slack_oauth_client_secret"; exit 1; }
           test -n "${{ secrets.TF_VAR_db_password }}" || { echo "::error::Missing secret TF_VAR_db_password"; exit 1; }
@@ -135,11 +135,11 @@ jobs:
           TF_VAR_hub_image_uri: ${{ steps.ecr_registry.outputs.value }}/agent-hub/hub:bootstrap
           TF_VAR_worker_role_arn: ""
           TF_VAR_frontend_url: ${{ vars.TF_VAR_frontend_url }}
-          TF_VAR_gmail_pubsub_topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
+          TF_VAR_google_pubsub_topic: ${{ vars.TF_VAR_google_pubsub_topic }}
           TF_VAR_gcp_project_id: ${{ vars.TF_VAR_gcp_project_id }}
-          TF_VAR_gmail_oauth_client_id: ${{ secrets.TF_VAR_gmail_oauth_client_id }}
-          TF_VAR_gmail_oauth_client_secret: ${{ secrets.TF_VAR_gmail_oauth_client_secret }}
-          TF_VAR_gmail_webhook_secret: ${{ secrets.TF_VAR_gmail_webhook_secret }}
+          TF_VAR_google_oauth_client_id: ${{ secrets.TF_VAR_google_oauth_client_id }}
+          TF_VAR_google_oauth_client_secret: ${{ secrets.TF_VAR_google_oauth_client_secret }}
+          TF_VAR_google_webhook_secret: ${{ secrets.TF_VAR_google_webhook_secret }}
           TF_VAR_slack_oauth_client_id: ${{ secrets.TF_VAR_slack_oauth_client_id }}
           TF_VAR_slack_oauth_client_secret: ${{ secrets.TF_VAR_slack_oauth_client_secret }}
           TF_VAR_langfuse_host: ${{ vars.TF_VAR_langfuse_host || 'https://cloud.langfuse.com' }}
@@ -159,7 +159,7 @@ jobs:
           TF_VAR_langfuse_host: ${{ vars.TF_VAR_langfuse_host || 'https://cloud.langfuse.com' }}
           TF_VAR_langfuse_public_key: ${{ secrets.TF_VAR_langfuse_public_key }}
           TF_VAR_langfuse_secret_key: ${{ secrets.TF_VAR_langfuse_secret_key }}
-          TF_VAR_gmail_pubsub_topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
+          TF_VAR_google_pubsub_topic: ${{ vars.TF_VAR_google_pubsub_topic }}
           TF_VAR_ecr_registry: ${{ steps.ecr_registry.outputs.value }}
 
       - name: Apply agents/incident-triage
@@ -257,11 +257,11 @@ jobs:
           hub-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_HUB }}:latest
           worker-role-arn: ""
           frontend-url: ${{ vars.TF_VAR_frontend_url }}
-          gmail-pubsub-topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
+          google-pubsub-topic: ${{ vars.TF_VAR_google_pubsub_topic }}
           gcp-project-id: ${{ vars.TF_VAR_gcp_project_id }}
-          gmail-oauth-client-id: ${{ secrets.TF_VAR_gmail_oauth_client_id }}
-          gmail-oauth-client-secret: ${{ secrets.TF_VAR_gmail_oauth_client_secret }}
-          gmail-webhook-secret: ${{ secrets.TF_VAR_gmail_webhook_secret }}
+          google-oauth-client-id: ${{ secrets.TF_VAR_google_oauth_client_id }}
+          google-oauth-client-secret: ${{ secrets.TF_VAR_google_oauth_client_secret }}
+          google-webhook-secret: ${{ secrets.TF_VAR_google_webhook_secret }}
           slack-oauth-client-id: ${{ secrets.TF_VAR_slack_oauth_client_id }}
           slack-oauth-client-secret: ${{ secrets.TF_VAR_slack_oauth_client_secret }}
           langfuse-host: ${{ vars.TF_VAR_langfuse_host || 'https://cloud.langfuse.com' }}
@@ -275,7 +275,7 @@ jobs:
           worker-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_WORKER }}:latest
           worker-deploy-revision: ${{ github.sha }}-${{ github.run_id }}
           gcp-project-id: ${{ vars.TF_VAR_gcp_project_id }}
-          gmail-pubsub-topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
+          google-pubsub-topic: ${{ vars.TF_VAR_google_pubsub_topic }}
           ecr-registry: ${{ env.ECR_REGISTRY }}
           langfuse-host: ${{ vars.TF_VAR_langfuse_host || 'https://cloud.langfuse.com' }}
           langfuse-public-key: ${{ secrets.TF_VAR_langfuse_public_key }}
@@ -297,11 +297,11 @@ jobs:
           hub-image-uri: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY_HUB }}:latest
           worker-role-arn: ${{ steps.worker_role.outputs.arn }}
           frontend-url: ${{ vars.TF_VAR_frontend_url }}
-          gmail-pubsub-topic: ${{ vars.TF_VAR_gmail_pubsub_topic }}
+          google-pubsub-topic: ${{ vars.TF_VAR_google_pubsub_topic }}
           gcp-project-id: ${{ vars.TF_VAR_gcp_project_id }}
-          gmail-oauth-client-id: ${{ secrets.TF_VAR_gmail_oauth_client_id }}
-          gmail-oauth-client-secret: ${{ secrets.TF_VAR_gmail_oauth_client_secret }}
-          gmail-webhook-secret: ${{ secrets.TF_VAR_gmail_webhook_secret }}
+          google-oauth-client-id: ${{ secrets.TF_VAR_google_oauth_client_id }}
+          google-oauth-client-secret: ${{ secrets.TF_VAR_google_oauth_client_secret }}
+          google-webhook-secret: ${{ secrets.TF_VAR_google_webhook_secret }}
           slack-oauth-client-id: ${{ secrets.TF_VAR_slack_oauth_client_id }}
           slack-oauth-client-secret: ${{ secrets.TF_VAR_slack_oauth_client_secret }}
           langfuse-host: ${{ vars.TF_VAR_langfuse_host || 'https://cloud.langfuse.com' }}

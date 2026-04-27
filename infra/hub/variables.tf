@@ -25,7 +25,7 @@ variable "frontend_url" {
   type = string
 }
 
-variable "gmail_pubsub_topic" {
+variable "google_pubsub_topic" {
   type = string
 }
 
@@ -33,17 +33,17 @@ variable "gcp_project_id" {
   type = string
 }
 
-variable "gmail_oauth_client_id" {
+variable "google_oauth_client_id" {
   type      = string
   sensitive = true
 }
 
-variable "gmail_oauth_client_secret" {
+variable "google_oauth_client_secret" {
   type      = string
   sensitive = true
 }
 
-variable "gmail_webhook_secret" {
+variable "google_webhook_secret" {
   type      = string
   sensitive = true
 }

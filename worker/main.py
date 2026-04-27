@@ -39,7 +39,7 @@ async def _gmail_renewal_scheduler_loop() -> None:
 
     while True:
         s = get_settings()
-        interval = s.gmail_renewal_scheduler_seconds
+        interval = s.google_renewal_scheduler_seconds
         if interval <= 0:
             return
         try:
@@ -70,7 +70,7 @@ async def _gmail_renewal_scheduler_loop() -> None:
             log.exception("gmail_renewal_scheduler_tick_failed")
 
         s = get_settings()
-        interval = s.gmail_renewal_scheduler_seconds
+        interval = s.google_renewal_scheduler_seconds
         if interval <= 0:
             return
         await asyncio.sleep(interval)
@@ -233,7 +233,7 @@ async def run() -> None:
 
     log.info("worker_starting", phase="startup")
     renew_task: asyncio.Task[None] | None = None
-    if settings.gmail_renewal_scheduler_seconds > 0:
+    if settings.google_renewal_scheduler_seconds > 0:
         renew_task = asyncio.create_task(_gmail_renewal_scheduler_loop())
     rollup_task: asyncio.Task[None] | None = None
     if settings.metrics_rollup_scheduler_seconds > 0:

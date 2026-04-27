@@ -2,7 +2,7 @@ environment = "staging"
 aws_account_id   = "123456789012"
 worker_image_uri = "123456789012.dkr.ecr.us-east-1.amazonaws.com/agent-hub/worker:latest"
 gcp_project_id     = "your-gcp"
-gmail_pubsub_topic = "projects/your-gcp/topics/gmail-push"
+google_pubsub_topic = "projects/your-gcp/topics/google-push"
 ecr_registry       = "123456789012.dkr.ecr.us-east-1.amazonaws.com"
 
 # Optional: default image is {ecr_registry}/agent-hub/{environment}/incident-triage:{agent_image_tag}

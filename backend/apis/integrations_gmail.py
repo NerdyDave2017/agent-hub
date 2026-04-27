@@ -47,14 +47,14 @@ def _make_flow():
     from google_auth_oauthlib.flow import Flow
 
     s = get_settings()
-    if not s.gmail_oauth_client_id or not s.gmail_oauth_client_secret:
+    if not s.google_oauth_client_id or not s.google_oauth_client_secret:
         raise HTTPException(status_code=503, detail="Gmail OAuth is not configured on the hub")
     redirect_uri = _gmail_oauth_redirect_uri()
     return Flow.from_client_config(
         client_config={
             "web": {
-                "client_id": s.gmail_oauth_client_id,
-                "client_secret": s.gmail_oauth_client_secret,
+                "client_id": s.google_oauth_client_id,
+                "client_secret": s.google_oauth_client_secret,
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
                 "redirect_uris": [redirect_uri],
@@ -134,8 +134,8 @@ async def gmail_oauth_callback(
     secret_body = {
         "access_token": creds.token,
         "refresh_token": creds.refresh_token,
-        "client_id": settings.gmail_oauth_client_id,
-        "client_secret": settings.gmail_oauth_client_secret,
+        "client_id": settings.google_oauth_client_id,
+        "client_secret": settings.google_oauth_client_secret,
         "token_uri": "https://oauth2.googleapis.com/token",
         "scopes": list(creds.scopes or GMAIL_SCOPES),
     }
@@ -145,19 +145,19 @@ async def gmail_oauth_callback(
         secret_string=json.dumps(secret_body),
     )
 
-    topic = (settings.gmail_pubsub_topic or "").strip()
+    topic = (settings.google_pubsub_topic or "").strip()
     if not topic:
         raise HTTPException(
             status_code=503,
-            detail="GMAIL_PUBSUB_TOPIC is not configured — cannot call users.watch()",
+            detail="GOOGLE_PUBSUB_TOPIC is not configured — cannot call users.watch()",
         )
 
     oauth_creds = Credentials(
         token=creds.token,
         refresh_token=creds.refresh_token,
         token_uri="https://oauth2.googleapis.com/token",
-        client_id=settings.gmail_oauth_client_id,
-        client_secret=settings.gmail_oauth_client_secret,
+        client_id=settings.google_oauth_client_id,
+        client_secret=settings.google_oauth_client_secret,
         scopes=list(creds.scopes or GMAIL_SCOPES),
     )
     gmail = build("gmail", "v1", credentials=oauth_creds, cache_discovery=False)

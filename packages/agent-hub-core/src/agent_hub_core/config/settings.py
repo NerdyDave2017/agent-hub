@@ -81,27 +81,36 @@ class Settings(BaseSettings):
         description="Bearer secret for ``/internal/*`` routes (must match agent ``HUB_SERVICE_TOKEN``).",
     )
 
-    # --- Gmail Pub/Sub + OAuth (operator / hub — see gmail-pubsub-implementation.md) ---
+    # --- Google (Workspace) mail: Pub/Sub push + OAuth (hub — see gmail-pubsub-implementation.md) ---
     hub_public_url: str = Field(
         default="http://127.0.0.1:8000",
         validation_alias=AliasChoices("HUB_PUBLIC_URL", "HUB_BASE_URL"),
         description="Public hub base URL (OAuth, agent runtime env AGENT_HUB_PUBLIC_URL). ECS often sets HUB_BASE_URL.",
     )
-    gmail_pubsub_topic: str = Field(
+    google_pubsub_topic: str = Field(
         default="",
-        validation_alias="GMAIL_PUBSUB_TOPIC",
-        description='Format: projects/{GCP_PROJECT}/topics/agent-hub-gmail-push',
+        validation_alias=AliasChoices("GOOGLE_PUBSUB_TOPIC", "GMAIL_PUBSUB_TOPIC"),
+        description='Format: projects/{GCP_PROJECT}/topics/agent-hub-google-push',
     )
-    gmail_oauth_client_id: str = Field(default="", validation_alias="GMAIL_OAUTH_CLIENT_ID")
-    gmail_oauth_client_secret: str = Field(default="", validation_alias="GMAIL_OAUTH_CLIENT_SECRET")
-    google_signin_client_id: str = Field(
+    google_oauth_client_id: str = Field(
         default="",
-        validation_alias="GOOGLE_SIGNIN_CLIENT_ID",
-        description="Google OAuth client ID for frontend Sign-In button; verified server-side via ID token.",
+        validation_alias=AliasChoices("GOOGLE_OAUTH_CLIENT_ID", "GMAIL_OAUTH_CLIENT_ID"),
     )
+    google_oauth_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("GOOGLE_OAUTH_CLIENT_SECRET", "GMAIL_OAUTH_CLIENT_SECRET"),
+    )
+    # google_signin_client_id: str = Field(
+    #     default="",
+    #     validation_alias="GOOGLE_SIGNIN_CLIENT_ID",
+    #     description="Google OAuth client ID for frontend Sign-In button; verified server-side via ID token.",
+    # )
     slack_oauth_client_id: str = Field(default="", validation_alias="SLACK_OAUTH_CLIENT_ID")
     slack_oauth_client_secret: str = Field(default="", validation_alias="SLACK_OAUTH_CLIENT_SECRET")
-    gmail_webhook_secret: str = Field(default="", validation_alias="GMAIL_WEBHOOK_SECRET")
+    google_webhook_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("GOOGLE_WEBHOOK_SECRET", "GMAIL_WEBHOOK_SECRET"),
+    )
     gcp_project_id: str = Field(default="", validation_alias="GCP_PROJECT_ID")
     incident_triage_agent_url: str = Field(
         default="",
@@ -151,10 +160,10 @@ class Settings(BaseSettings):
         validation_alias="APP_RUNNER_CREATE_VPC_CONNECTOR_ARN",
         description="When set, egress uses this VPC connector (private RDS, etc.).",
     )
-    gmail_renewal_scheduler_seconds: int = Field(
+    google_renewal_scheduler_seconds: int = Field(
         default=86_400,
         ge=0,
-        validation_alias="GMAIL_RENEWAL_SCHEDULER_SECONDS",
+        validation_alias=AliasChoices("GOOGLE_RENEWAL_SCHEDULER_SECONDS", "GMAIL_RENEWAL_SCHEDULER_SECONDS"),
         description="Worker background loop: enqueue gmail_watch_renewal for expiring integrations; 0 disables.",
     )
     metrics_rollup_scheduler_seconds: int = Field(
