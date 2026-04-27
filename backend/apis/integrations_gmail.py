@@ -8,11 +8,13 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 import httpx
+from botocore.exceptions import ClientError
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import RedirectResponse
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from agent_hub_core.config.settings import get_settings
 from agent_hub_core.db.models import Integration
@@ -24,6 +26,12 @@ from services import agents_service, aws_secrets, tenants_service
 log = get_logger(__name__)
 
 router = APIRouter()
+
+
+def _oauth_code_metrics(code: str | None) -> dict[str, int | bool]:
+    if not code:
+        return {"oauth_code_present": False}
+    return {"oauth_code_present": True, "oauth_code_length": len(code)}
 
 # Hub never calls the agent over HTTP. After OAuth, `integrations.watch_active=True`
 # (set below) lets the agent poll loop skip Gmail polling when hub Pub/Sub is active.
@@ -54,7 +62,10 @@ def _make_flow():
 
     s = get_settings()
     if not s.google_oauth_client_id or not s.google_oauth_client_secret:
-        raise HTTPException(status_code=503, detail="Gmail OAuth is not configured on the hub")
+        raise HTTPException(
+            status_code=400,
+            detail="Gmail OAuth is not configured on this hub (set GOOGLE_OAUTH_CLIENT_ID and GOOGLE_OAUTH_CLIENT_SECRET).",
+        )
     redirect_uri = _gmail_oauth_redirect_uri()
     # Web client uses client_secret at token endpoint — PKCE is optional. If
     # autogenerate_code_verifier stays True, authorization_url() sets a verifier
@@ -88,8 +99,12 @@ async def gmail_oauth_start(
     tenant_id: UUID,
     agent_id: UUID,
 ):
+    log.info("gmail_oauth_start_entered", tenant_id=str(tenant_id), agent_id=str(agent_id))
     await tenants_service.require_tenant(session, tenant_id)
     await agents_service.require_agent(session, tenant_id, agent_id)
+    log.info("gmail_oauth_start_tenant_agent_ok", tenant_id=str(tenant_id), agent_id=str(agent_id))
+    redirect_uri = _gmail_oauth_redirect_uri()
+    log.info("gmail_oauth_start_redirect_uri", tenant_id=str(tenant_id), agent_id=str(agent_id), redirect_uri=redirect_uri)
     flow = _make_flow()
     state_payload = {"tenant_id": str(tenant_id), "agent_id": str(agent_id)}
     state = base64.urlsafe_b64encode(json.dumps(state_payload).encode()).decode()
@@ -98,6 +113,13 @@ async def gmail_oauth_start(
         include_granted_scopes="true",
         prompt="consent",
         state=state,
+    )
+    log.info(
+        "gmail_oauth_start_redirecting",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        redirect_uri=redirect_uri,
+        state_length=len(state),
     )
     return RedirectResponse(auth_url)
 
@@ -109,38 +131,104 @@ async def gmail_oauth_callback(
     state: str = Query(...),
     error: str | None = Query(default=None),
 ):
+    log.info(
+        "gmail_oauth_callback_entered",
+        **_oauth_code_metrics(code),
+        state_length=len(state) if state else 0,
+        google_error=error,
+    )
     if error:
+        log.warning("gmail_oauth_callback_google_error", google_error=error)
         raise HTTPException(status_code=400, detail=f"OAuth error: {error}")
     try:
         state_data = json.loads(base64.urlsafe_b64decode(state.encode()).decode())
         tenant_id = UUID(state_data["tenant_id"])
         agent_id = UUID(state_data["agent_id"])
     except Exception as exc:
+        log.warning("gmail_oauth_callback_invalid_state", error=str(exc))
         raise HTTPException(status_code=400, detail=f"Invalid state: {exc}") from exc
 
+    log.info("gmail_oauth_callback_state_ok", tenant_id=str(tenant_id), agent_id=str(agent_id))
     await tenants_service.require_tenant(session, tenant_id)
     await agents_service.require_agent(session, tenant_id, agent_id)
 
     flow = _make_flow()
+    log.info(
+        "gmail_oauth_token_exchange_begin",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        redirect_uri=_gmail_oauth_redirect_uri(),
+    )
     try:
         flow.fetch_token(code=code)
     except Exception as exc:
-        log.exception("gmail_oauth_token_exchange_failed")
+        log.exception(
+            "gmail_oauth_token_exchange_failed",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
+        )
         raise HTTPException(status_code=400, detail=f"Token exchange failed: {exc}") from exc
 
+    log.info(
+        "gmail_oauth_token_exchange_ok",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        has_refresh_token=bool(flow.credentials and flow.credentials.refresh_token),
+    )
     creds = flow.credentials
     settings = get_settings()
 
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        userinfo = await client.get(
-            "https://www.googleapis.com/oauth2/v2/userinfo",
-            headers={"Authorization": f"Bearer {creds.token}"},
+    log.info("gmail_oauth_userinfo_request", tenant_id=str(tenant_id), agent_id=str(agent_id))
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            userinfo = await client.get(
+                "https://www.googleapis.com/oauth2/v2/userinfo",
+                headers={"Authorization": f"Bearer {creds.token}"},
+            )
+    except httpx.RequestError as exc:
+        log.exception(
+            "gmail_oauth_userinfo_http_error",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
         )
+        raise HTTPException(
+            status_code=400,
+            detail="Could not reach Google userinfo. Check outbound network access and try again.",
+        ) from exc
+    log.info(
+        "gmail_oauth_userinfo_response",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        http_status=userinfo.status_code,
+    )
     if userinfo.status_code != 200:
-        raise HTTPException(status_code=502, detail="Failed to read Google userinfo")
+        log.warning(
+            "gmail_oauth_userinfo_failed",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
+            http_status=userinfo.status_code,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Google userinfo request failed (HTTP {userinfo.status_code}).",
+        )
     email_address = userinfo.json().get("email")
     if not email_address:
-        raise HTTPException(status_code=502, detail="Google userinfo missing email")
+        log.warning(
+            "gmail_oauth_userinfo_missing_email",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Google userinfo response did not include an email address.",
+        )
+    log.info(
+        "gmail_oauth_userinfo_ok",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        email_domain=(email_address.split("@")[-1] if "@" in str(email_address) else None),
+    )
 
     secret_body = {
         "access_token": creds.token,
@@ -151,16 +239,59 @@ async def gmail_oauth_callback(
         "scopes": list(creds.scopes or GMAIL_SCOPES),
     }
     secret_name = _secret_name(tenant_id, agent_id)
-    secret_arn = await aws_secrets.upsert_secret_string(
-        name=secret_name,
-        secret_string=json.dumps(secret_body),
+    log.info(
+        "gmail_oauth_secret_upsert_begin",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        secret_name=secret_name,
+    )
+    try:
+        secret_arn = await aws_secrets.upsert_secret_string(
+            name=secret_name,
+            secret_string=json.dumps(secret_body),
+        )
+    except ClientError as exc:
+        err_code = (exc.response.get("Error") or {}).get("Code", "ClientError")
+        log.exception(
+            "gmail_oauth_secret_upsert_failed",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
+            secret_name=secret_name,
+            aws_error_code=err_code,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to store Gmail OAuth token in AWS Secrets Manager ({err_code}). Check IAM permissions.",
+        ) from exc
+    except Exception as exc:
+        log.exception(
+            "gmail_oauth_secret_upsert_failed",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
+            secret_name=secret_name,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to store Gmail OAuth token (unexpected error while calling AWS).",
+        ) from exc
+    log.info(
+        "gmail_oauth_secret_upsert_ok",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        secret_name=secret_name,
+        has_secret_arn=bool(secret_arn),
     )
 
     topic = (settings.google_pubsub_topic or "").strip()
     if not topic:
+        log.warning(
+            "gmail_oauth_pubsub_topic_missing",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
+        )
         raise HTTPException(
-            status_code=503,
-            detail="GOOGLE_PUBSUB_TOPIC is not configured — cannot call users.watch()",
+            status_code=400,
+            detail="GOOGLE_PUBSUB_TOPIC is not configured on this hub; cannot complete Gmail push setup (users.watch).",
         )
 
     oauth_creds = Credentials(
@@ -172,6 +303,12 @@ async def gmail_oauth_callback(
         scopes=list(creds.scopes or GMAIL_SCOPES),
     )
     gmail = build("gmail", "v1", credentials=oauth_creds, cache_discovery=False)
+    log.info(
+        "gmail_oauth_watch_begin",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        topic_suffix=topic.split("/")[-1] if "/" in topic else topic[:80],
+    )
     try:
         watch_response = (
             gmail.users()
@@ -186,9 +323,14 @@ async def gmail_oauth_callback(
             .execute()
         )
     except Exception as exc:
-        log.exception("gmail_watch_failed", tenant_id=str(tenant_id), agent_id=str(agent_id))
+        log.exception(
+            "gmail_watch_failed",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
+            topic_configured=bool(topic),
+        )
         raise HTTPException(
-            status_code=502,
+            status_code=400,
             detail=(
                 "Gmail users.watch() failed. Ensure the Pub/Sub topic exists and "
                 "gmail-api-push@system.gserviceaccount.com can publish to it. "
@@ -201,6 +343,13 @@ async def gmail_oauth_callback(
         tz=timezone.utc,
     )
     history_id = str(watch_response.get("historyId") or "")
+    log.info(
+        "gmail_oauth_watch_ok",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        watch_expires_at=watch_expires_at.isoformat(),
+        has_history_id=bool(history_id),
+    )
 
     existing = await session.scalar(
         select(Integration).where(
@@ -235,7 +384,30 @@ async def gmail_oauth_callback(
                 connection_status="active",
             )
         )
-    await session.commit()
+    try:
+        await session.commit()
+    except SQLAlchemyError as exc:
+        log.exception(
+            "gmail_oauth_db_commit_failed",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
+        )
+        await session.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to save Gmail integration to the database.",
+        ) from exc
+    log.info(
+        "gmail_oauth_db_commit_ok",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        integration_updated=existing is not None,
+    )
 
     dest = f"{settings.hub_public_url.rstrip('/')}/?gmail=connected=1"
+    log.info(
+        "gmail_oauth_complete_redirect",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+    )
     return RedirectResponse(dest, status_code=302)

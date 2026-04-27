@@ -11,10 +11,12 @@ from urllib.parse import urlencode, urlparse
 from uuid import UUID
 
 import httpx
+from botocore.exceptions import ClientError
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from agent_hub_core.config.settings import get_settings
 from agent_hub_core.db.models import Integration
@@ -26,6 +28,13 @@ from services import agents_service, aws_secrets, tenants_service
 log = get_logger(__name__)
 
 router = APIRouter()
+
+
+def _oauth_code_metrics(code: str | None) -> dict[str, int | bool]:
+    """Safe for logs: never log the authorization code itself."""
+    if not code:
+        return {"oauth_code_present": False}
+    return {"oauth_code_present": True, "oauth_code_length": len(code)}
 
 # Bot scopes for incident alerts (``chat.postMessage``). Add more in Slack app config if needed.
 SLACK_BOT_SCOPES = "chat:write"
@@ -183,11 +192,27 @@ async def slack_oauth_start(
     ``code_challenge`` / ``code_challenge_method`` on authorize and ``code_verifier`` on ``oauth.v2.access``
     (Slack PKCE token step omits ``client_secret``).
     """
+    log.info(
+        "slack_oauth_start_entered",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        response_mode=response_mode,
+        return_mode=return_mode,
+    )
     await tenants_service.require_tenant(session, tenant_id)
     await agents_service.require_agent(session, tenant_id, agent_id)
+    log.info(
+        "slack_oauth_start_tenant_agent_ok",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+    )
     s = get_settings()
     if not s.slack_oauth_client_id or not s.slack_oauth_client_secret:
-        raise HTTPException(status_code=503, detail="Slack OAuth is not configured on the hub")
+        log.warning("slack_oauth_start_not_configured", tenant_id=str(tenant_id), agent_id=str(agent_id))
+        raise HTTPException(
+            status_code=400,
+            detail="Slack OAuth is not configured on this hub (set SLACK_OAUTH_CLIENT_ID and SLACK_OAUTH_CLIENT_SECRET).",
+        )
 
     state_payload: dict[str, Any] = {"tenant_id": str(tenant_id), "agent_id": str(agent_id)}
     if return_mode == "post_message":
@@ -209,6 +234,16 @@ async def slack_oauth_start(
             params["code_challenge"] = _slack_pkce_challenge(v)
             params["code_challenge_method"] = "S256"
     auth_url = f"https://slack.com/oauth/v2/authorize?{urlencode(params)}"
+    log.info(
+        "slack_oauth_start_redirecting",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        redirect_uri=redirect_uri,
+        slack_oauth_pkce=s.slack_oauth_pkce,
+        response_mode=response_mode,
+        return_mode=return_mode,
+        state_length=len(state),
+    )
     if response_mode == "json":
         return JSONResponse(SlackOAuthStartJson(authorization_url=auth_url).model_dump())
     return RedirectResponse(auth_url)
@@ -221,6 +256,13 @@ async def slack_oauth_callback(
     state: str | None = Query(default=None),
     error: str | None = Query(default=None),
 ):
+    log.info(
+        "slack_oauth_callback_entered",
+        **_oauth_code_metrics(code),
+        state_present=bool(state),
+        state_length=len(state) if state else 0,
+        slack_error=error,
+    )
     post_message = False
     if state:
         try:
@@ -230,6 +272,11 @@ async def slack_oauth_callback(
             post_message = False
 
     if error:
+        log.warning(
+            "slack_oauth_callback_slack_denied",
+            slack_error=error,
+            post_message=post_message,
+        )
         if post_message:
             return HTMLResponse(
                 _slack_oauth_finish_html(
@@ -241,6 +288,7 @@ async def slack_oauth_callback(
             )
         raise HTTPException(status_code=400, detail=f"OAuth error: {error}")
     if not code or not state:
+        log.warning("slack_oauth_callback_missing_code_or_state", has_code=bool(code), has_state=bool(state))
         raise HTTPException(status_code=400, detail="Missing code or state")
     try:
         state_data = json.loads(base64.urlsafe_b64decode(state.encode()).decode())
@@ -248,14 +296,32 @@ async def slack_oauth_callback(
         agent_id = UUID(state_data["agent_id"])
         post_message = bool(state_data.get("post_message"))
     except Exception as exc:
+        log.warning("slack_oauth_callback_invalid_state", error=str(exc))
         raise HTTPException(status_code=400, detail=f"Invalid state: {exc}") from exc
 
+    log.info(
+        "slack_oauth_callback_state_ok",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        post_message=post_message,
+        pkce_in_state=bool(
+            isinstance(state_data.get("code_verifier"), str) and str(state_data.get("code_verifier", "")).strip()
+        ),
+    )
     await tenants_service.require_tenant(session, tenant_id)
     await agents_service.require_agent(session, tenant_id, agent_id)
 
     s = get_settings()
     if not s.slack_oauth_client_id or not s.slack_oauth_client_secret:
-        raise HTTPException(status_code=503, detail="Slack OAuth is not configured on the hub")
+        log.warning(
+            "slack_oauth_callback_not_configured",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Slack OAuth is not configured on this hub (set SLACK_OAUTH_CLIENT_ID and SLACK_OAUTH_CLIENT_SECRET).",
+        )
 
     redirect_uri = _slack_oauth_redirect_uri()
     code_verifier = state_data.get("code_verifier")
@@ -274,25 +340,89 @@ async def slack_oauth_callback(
             "code": code,
             "redirect_uri": redirect_uri,
         }
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            "https://slack.com/api/oauth.v2.access",
-            data=token_body,
+    token_mode = "pkce" if "code_verifier" in token_body else "client_secret"
+    log.info(
+        "slack_oauth_token_exchange_begin",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        redirect_uri=redirect_uri,
+        token_mode=token_mode,
+    )
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                "https://slack.com/api/oauth.v2.access",
+                data=token_body,
+            )
+    except httpx.RequestError as exc:
+        log.exception(
+            "slack_oauth_token_http_error",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
         )
+        raise HTTPException(
+            status_code=400,
+            detail="Could not reach Slack to exchange the OAuth code. Check outbound network access and try again.",
+        ) from exc
+    log.info(
+        "slack_oauth_token_http_response",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        http_status=resp.status_code,
+        content_type=resp.headers.get("content-type"),
+    )
     try:
         data: dict[str, Any] = resp.json()
     except Exception as exc:
-        log.exception("slack_oauth_invalid_json", status_code=resp.status_code)
-        raise HTTPException(status_code=502, detail="Slack token response was not JSON") from exc
+        log.exception(
+            "slack_oauth_token_response_not_json",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
+            http_status=resp.status_code,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Slack token response was not valid JSON (HTTP {resp.status_code}).",
+        ) from exc
 
     if not data.get("ok"):
         err = data.get("error", "unknown")
+        log.warning(
+            "slack_oauth_token_slack_error",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
+            slack_api_error=err,
+            http_status=resp.status_code,
+        )
         raise HTTPException(status_code=400, detail=f"Slack oauth.v2.access failed: {err}")
 
     bot_token = data.get("access_token")
     if not bot_token or not isinstance(bot_token, str):
-        raise HTTPException(status_code=502, detail="Slack response missing bot access_token")
+        log.error(
+            "slack_oauth_token_missing_access_token",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
+            response_keys=sorted(str(k) for k in data.keys()),
+            token_type=data.get("token_type"),
+        )
+        hint = (
+            " Slack returned a user-only OAuth payload (no bot token). "
+            "Ensure the Slack app is installed to the workspace with bot scopes (e.g. chat:write)."
+            if data.get("authed_user")
+            else ""
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Slack did not return a bot access_token after install." + hint,
+        )
 
+    log.info(
+        "slack_oauth_token_exchange_ok",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        token_type=data.get("token_type"),
+        app_id=data.get("app_id"),
+    )
     team = data.get("team") or {}
     team_id = team.get("id")
     team_name = team.get("name")
@@ -308,9 +438,47 @@ async def slack_oauth_callback(
         "scope": scopes_str,
     }
     secret_name = _slack_secret_name(tenant_id, agent_id)
-    secret_arn = await aws_secrets.upsert_secret_string(
-        name=secret_name,
-        secret_string=json.dumps(secret_body),
+    log.info(
+        "slack_oauth_secret_upsert_begin",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        secret_name=secret_name,
+    )
+    try:
+        secret_arn = await aws_secrets.upsert_secret_string(
+            name=secret_name,
+            secret_string=json.dumps(secret_body),
+        )
+    except ClientError as exc:
+        err_code = (exc.response.get("Error") or {}).get("Code", "ClientError")
+        log.exception(
+            "slack_oauth_secret_upsert_failed",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
+            secret_name=secret_name,
+            aws_error_code=err_code,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Failed to store Slack token in AWS Secrets Manager ({err_code}). Check IAM permissions for secretsmanager:CreateSecret and secretsmanager:PutSecretValue.",
+        ) from exc
+    except Exception as exc:
+        log.exception(
+            "slack_oauth_secret_upsert_failed",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
+            secret_name=secret_name,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to store Slack token (unexpected error while calling AWS).",
+        ) from exc
+    log.info(
+        "slack_oauth_secret_upsert_ok",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        secret_name=secret_name,
+        has_secret_arn=bool(secret_arn),
     )
 
     provider_config: dict[str, Any] = {}
@@ -345,9 +513,33 @@ async def slack_oauth_callback(
                 connection_status="active",
             )
         )
-    await session.commit()
+    try:
+        await session.commit()
+    except SQLAlchemyError as exc:
+        log.exception(
+            "slack_oauth_db_commit_failed",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
+        )
+        await session.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to save Slack integration to the database.",
+        ) from exc
+    log.info(
+        "slack_oauth_db_commit_ok",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        team_id=str(team_id) if team_id else None,
+        integration_updated=existing is not None,
+    )
 
     if post_message:
+        log.info(
+            "slack_oauth_complete_post_message",
+            tenant_id=str(tenant_id),
+            agent_id=str(agent_id),
+        )
         return HTMLResponse(
             _slack_oauth_finish_html(
                 success=True,
@@ -357,4 +549,10 @@ async def slack_oauth_callback(
             status_code=200,
         )
     dest = f"{s.hub_public_url.rstrip('/')}/?slack=connected=1"
+    log.info(
+        "slack_oauth_complete_redirect",
+        tenant_id=str(tenant_id),
+        agent_id=str(agent_id),
+        redirect_to_hub=True,
+    )
     return RedirectResponse(dest, status_code=302)
