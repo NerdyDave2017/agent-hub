@@ -411,7 +411,7 @@ async def gmail_oauth_callback(
         integration_updated=existing is not None,
     )
 
-    dest = f"{settings.hub_public_url.rstrip('/')}/?gmail=connected=1"
+    dest = settings.oauth_browser_completion_url({"gmail": "connected=1"})
     log.info(
         "gmail_oauth_complete_redirect",
         tenant_id=str(tenant_id),

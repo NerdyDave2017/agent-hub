@@ -22,7 +22,9 @@ variable "worker_role_arn" {
 }
 
 variable "frontend_url" {
-  type = string
+  type        = string
+  default     = ""
+  description = "Dashboard origin for FRONTEND_URL on hub App Runner (OAuth return to Next.js). GitHub: repo variable TF_VAR_frontend_url."
 }
 
 variable "hub_public_url" {

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+from urllib.parse import urlencode
 
 from pydantic import AliasChoices, Field, PostgresDsn, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -88,6 +89,18 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("HUB_PUBLIC_URL", "HUB_BASE_URL"),
         description="Public hub base URL (OAuth redirects, AGENT_HUB_PUBLIC_URL). Set in .env for local dev; "
         "App Runner injects HUB_PUBLIC_URL from Terraform (often the service URL or TF_VAR_hub_public_url / GitHub var).",
+    )
+    frontend_url: str = Field(
+        default="",
+        validation_alias="FRONTEND_URL",
+        description="Dashboard client origin (e.g. https://app.example.com). After Gmail/Slack OAuth the hub sends "
+        "users to ``{FRONTEND_URL or HUB_PUBLIC_URL}{oauth_frontend_return_path}?…``. Set FRONTEND_URL in App Runner "
+        "(GitHub repo variable TF_VAR_frontend_url) when the UI is not served from the API host.",
+    )
+    oauth_frontend_return_path: str = Field(
+        default="/dashboard/agents/new",
+        validation_alias="OAUTH_FRONTEND_RETURN_PATH",
+        description="Path on FRONTEND_URL (or HUB_PUBLIC_URL when FRONTEND_URL is empty) for post-OAuth browser redirects.",
     )
     google_pubsub_topic: str = Field(
         default="",
@@ -234,6 +247,14 @@ class Settings(BaseSettings):
     jwt_algorithm: str = Field(default="HS256", validation_alias="JWT_ALGORITHM")
     jwt_expire_minutes: int = Field(default=60, ge=5, le=24 * 60, validation_alias="JWT_EXPIRE_MINUTES")
     jwt_issuer: str = Field(default="agent-hub", validation_alias="JWT_ISSUER")
+
+    def oauth_browser_completion_url(self, query: dict[str, str]) -> str:
+        """Absolute URL to open in the browser after OAuth (dashboard route + query flags)."""
+        base = (self.frontend_url or "").strip() or self.hub_public_url.rstrip("/")
+        path = (self.oauth_frontend_return_path or "/dashboard/agents/new").strip()
+        if not path.startswith("/"):
+            path = "/" + path
+        return f"{base.rstrip('/')}{path}?{urlencode(query)}"
 
     @computed_field  # type: ignore[prop-decorator]
     @property

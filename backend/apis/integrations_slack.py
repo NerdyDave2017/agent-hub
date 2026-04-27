@@ -76,6 +76,9 @@ def _slack_post_message_target_origin() -> str:
     custom = (s.slack_oauth_parent_origin or "").strip()
     if custom:
         return custom.rstrip("/")
+    fe = (s.frontend_url or "").strip()
+    if fe:
+        return _origin_from_public_url(fe)
     return _origin_from_public_url(s.hub_public_url)
 
 
@@ -83,12 +86,11 @@ def _slack_oauth_finish_html(
     *,
     success: bool,
     detail: str | None,
-    fallback_query: str,
+    query: dict[str, str],
 ) -> str:
     """Notify opener (popup flow) or redirect when opened in a normal tab."""
     s = get_settings()
-    hub = s.hub_public_url.rstrip("/")
-    dest = f"{hub}{fallback_query}"
+    dest = s.oauth_browser_completion_url(query)
     target_origin = _slack_post_message_target_origin()
     payload: dict[str, Any] = {"type": "agent-hub-slack-oauth", "status": "success" if success else "error"}
     if detail:
@@ -178,7 +180,8 @@ async def slack_oauth_start(
     return_mode: Literal["redirect", "post_message"] = Query(
         "redirect",
         description="`post_message`: after Slack authorizes, the callback page notifies `window.opener` and closes "
-        "(pair with a popup or new tab). Set `SLACK_OAUTH_PARENT_ORIGIN` if the UI origin differs from `HUB_PUBLIC_URL`.",
+        "(pair with a popup or new tab). `postMessage` target origin defaults to `FRONTEND_URL` when set, else "
+        "`HUB_PUBLIC_URL`. Set `SLACK_OAUTH_PARENT_ORIGIN` to override.",
     ),
 ):
     """
@@ -282,7 +285,7 @@ async def slack_oauth_callback(
                 _slack_oauth_finish_html(
                     success=False,
                     detail=error,
-                    fallback_query="/?slack=error=1",
+                    query={"slack": "error=1"},
                 ),
                 status_code=200,
             )
@@ -551,15 +554,15 @@ async def slack_oauth_callback(
             _slack_oauth_finish_html(
                 success=True,
                 detail=None,
-                fallback_query="/?slack=connected=1",
+                query={"slack": "connected=1"},
             ),
             status_code=200,
         )
-    dest = f"{s.hub_public_url.rstrip('/')}/?slack=connected=1"
+    dest = s.oauth_browser_completion_url({"slack": "connected=1"})
     log.info(
         "slack_oauth_complete_redirect",
         tenant_id=str(tenant_id),
         agent_id=str(agent_id),
-        redirect_to_hub=True,
+        redirect_to=dest,
     )
     return RedirectResponse(dest, status_code=302)
