@@ -19,6 +19,27 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
+    has_workspace: bool = Field(
+        default=True,
+        description="False when the user exists but has no tenant yet (Google first-login). "
+        "Frontend must redirect to workspace creation before proceeding to dashboard.",
+    )
+
+
+class GoogleAuthRequest(BaseModel):
+    """Frontend sends the credential (ID token JWT) from Google Sign-In SDK."""
+
+    id_token: str = Field(..., min_length=1, description="Google ID token (credential) from frontend")
+
+
+class GoogleAuthResponse(TokenResponse):
+    """Returned from POST /auth/google. Includes tenant info when a workspace exists."""
+
+    user_id: uuid.UUID
+    email: str
+    display_name: str | None = None
+    tenant_id: uuid.UUID | None = None
+    tenant_slug: str | None = None
 
 
 class SignupRequest(BaseModel):

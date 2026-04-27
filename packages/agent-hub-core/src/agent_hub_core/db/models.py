@@ -115,7 +115,13 @@ class User(Base):
     )  # soft-disable login without deleting the row
     password_hash: Mapped[str | None] = mapped_column(
         String(255), nullable=True
-    )  # bcrypt hash; null until operator sets password (dashboard login)
+    )  # bcrypt hash; null for Google-auth users or until operator sets password
+    auth_provider: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default=text("'password'")
+    )  # "password" or "google"; controls which login flow is valid
+    google_sub: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, unique=True
+    )  # Google account 'sub' claim — globally unique, used to match returning Google users
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     tenant: Mapped[Tenant] = relationship(back_populates="users")

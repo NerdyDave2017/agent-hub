@@ -49,7 +49,9 @@ async def create_tenant_with_owner(
     slug: str,
     owner_email: str,
     owner_display_name: str,
-    password_hash: str,
+    password_hash: str | None = None,
+    auth_provider: str = "password",
+    google_sub: str | None = None,
 ) -> tuple[Tenant, User]:
     """
     Create a tenant and its first user in one transaction.
@@ -65,6 +67,8 @@ async def create_tenant_with_owner(
         email=owner_email,
         display_name=owner_display_name,
         password_hash=password_hash,
+        auth_provider=auth_provider,
+        google_sub=google_sub,
         is_active=True,
     )
     session.add(user)

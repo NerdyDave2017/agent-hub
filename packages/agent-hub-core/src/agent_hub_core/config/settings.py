@@ -94,6 +94,11 @@ class Settings(BaseSettings):
     )
     gmail_oauth_client_id: str = Field(default="", validation_alias="GMAIL_OAUTH_CLIENT_ID")
     gmail_oauth_client_secret: str = Field(default="", validation_alias="GMAIL_OAUTH_CLIENT_SECRET")
+    google_signin_client_id: str = Field(
+        default="",
+        validation_alias="GOOGLE_SIGNIN_CLIENT_ID",
+        description="Google OAuth client ID for frontend Sign-In button; verified server-side via ID token.",
+    )
     slack_oauth_client_id: str = Field(default="", validation_alias="SLACK_OAUTH_CLIENT_ID")
     slack_oauth_client_secret: str = Field(default="", validation_alias="SLACK_OAUTH_CLIENT_SECRET")
     gmail_webhook_secret: str = Field(default="", validation_alias="GMAIL_WEBHOOK_SECRET")
