@@ -25,14 +25,20 @@ class TokenResponse(BaseModel):
     )
 
 
-class LoginResponse(TokenResponse):
-    tenant_name: str
+class UserResponse(TokenResponse):
+    """JWT plus user and tenant profile (shared by login, signup, Google, and GET /auth/{user_id})."""
+
     user_id: uuid.UUID
     email: str
     display_name: str | None = None
     tenant_id: uuid.UUID | None = None
     tenant_slug: str | None = None
     tenant_name: str | None = None
+
+
+class LoginResponse(UserResponse):
+    """Password login."""
+
 
 class GoogleAuthRequest(BaseModel):
     """Frontend sends the Google ID token JWT from Google Sign-In SDK."""
@@ -40,15 +46,8 @@ class GoogleAuthRequest(BaseModel):
     id_token: str = Field(..., min_length=1, description="Google ID token (credential) from frontend")
 
 
-class GoogleAuthResponse(TokenResponse):
+class GoogleAuthResponse(UserResponse):
     """Returned from POST /auth/google. Includes tenant info when a workspace exists."""
-
-    user_id: uuid.UUID
-    email: str
-    display_name: str | None = None
-    tenant_id: uuid.UUID | None = None
-    tenant_slug: str | None = None
-    tenant_name: str | None = None
 
 
 class SignupRequest(BaseModel):
@@ -67,8 +66,9 @@ class SignupRequest(BaseModel):
         return self
 
 
-class SignupResponse(TokenResponse):
+class SignupResponse(UserResponse):
+    """New workspace; tenant fields are always set."""
+
     tenant_id: uuid.UUID
     tenant_slug: str
-    user_id: uuid.UUID
-    tenant_name: str 
+    tenant_name: str

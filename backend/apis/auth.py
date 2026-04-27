@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import time
 import uuid
 from dataclasses import dataclass
+from typing import Annotated, Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as google_id_token
+from jwt.exceptions import InvalidTokenError
 from pydantic import BaseModel, Field as PydanticField
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -23,7 +27,7 @@ from agent_hub_core.schemas.auth import (
     LoginResponse,
     SignupRequest,
     SignupResponse,
-    TokenResponse,
+    UserResponse,
 )
 from agent_hub_core.schemas.tenant import slug_from_workspace_name
 
@@ -36,6 +40,56 @@ log = get_logger(__name__)
 router = APIRouter()
 
 _SIGNUP_SLUG_ATTEMPTS = 12
+
+_hub_http_bearer = HTTPBearer(auto_error=False)
+
+
+@dataclass(frozen=True)
+class _HubJwtContext:
+    """Decoded hub access JWT plus the raw bearer string (for echo on profile responses)."""
+
+    payload: dict[str, Any]
+    raw_token: str
+
+
+def _expires_in_from_payload(payload: dict[str, Any]) -> int:
+    exp = payload.get("exp")
+    if exp is None:
+        return 0
+    if hasattr(exp, "timestamp"):
+        ts = float(exp.timestamp())
+    else:
+        ts = float(exp)
+    return max(0, int(ts - time.time()))
+
+
+async def _require_hub_access_jwt(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_hub_http_bearer)],
+) -> _HubJwtContext:
+    if credentials is None or (credentials.scheme or "").lower() != "bearer":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authenticated.",
+        )
+    token = credentials.credentials
+    try:
+        payload = auth_service.decode_access_token(token)
+    except InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token.",
+        ) from None
+    if payload.get("scope") == "google_signup":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="This token cannot be used for this resource.",
+        )
+    if not payload.get("tenant_id"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token.",
+        )
+    return _HubJwtContext(payload=payload, raw_token=token)
 
 
 @dataclass(frozen=True)
@@ -86,8 +140,8 @@ async def login(session: DbSession, body: LoginRequest) -> LoginResponse:
             detail=str(exc),
         ) from exc
     t = user.tenant
-    tenant_name = t.name if t is not None else ""
     tenant_slug = t.slug if t is not None else None
+    tenant_name = t.name if t is not None else None
     return LoginResponse(
         access_token=token,
         expires_in=ttl,
@@ -160,6 +214,8 @@ async def signup(session: DbSession, body: SignupRequest) -> SignupResponse:
         tenant_slug=tenant.slug,
         tenant_name=tenant.name,
         user_id=user.id,
+        email=user.email,
+        display_name=user.display_name,
     )
 
 
@@ -384,7 +440,6 @@ async def google_complete_signup(
     must collect a workspace name and send it here with the provisional JWT.
     """
     import jwt as pyjwt
-    from jwt.exceptions import InvalidTokenError
 
     settings = get_settings()
     secret = (settings.jwt_secret_key or "").strip()
@@ -477,5 +532,56 @@ async def google_complete_signup(
         tenant_slug=tenant.slug,
         tenant_name=tenant.name,
         user_id=user.id,
+        email=user.email,
+        display_name=user.display_name,
     )
 
+
+@router.get("/me", response_model=UserResponse)
+async def get_current_user(
+    session: DbSession,
+    jwt_ctx: Annotated[_HubJwtContext, Depends(_require_hub_access_jwt)],
+) -> UserResponse:
+    """
+    Return user and tenant details for the currently authenticated user.
+
+    Extracts ``user_id`` from the JWT ``sub`` claim. Requires
+    ``Authorization: Bearer <access_token>``.
+    """
+    payload = jwt_ctx.payload
+    try:
+        user_id = uuid.UUID(str(payload["sub"]))
+    except (ValueError, TypeError, KeyError):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token.",
+        ) from None
+
+    user = await session.scalar(
+        select(User)
+        .options(selectinload(User.tenant))
+        .where(User.id == user_id)
+    )
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found.",
+        )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is disabled. Contact support if you need help.",
+        )
+
+    t = user.tenant
+    return UserResponse(
+        access_token=jwt_ctx.raw_token,
+        expires_in=_expires_in_from_payload(payload),
+        has_workspace=True,
+        user_id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        tenant_id=user.tenant_id,
+        tenant_slug=t.slug if t else None,
+        tenant_name=t.name if t else None,
+    )
