@@ -38,8 +38,14 @@ GMAIL_SCOPES = [
 
 def _gmail_oauth_redirect_uri() -> str:
     s = get_settings()
+    override = (s.google_oauth_redirect_uri or "").strip()
+    if override:
+        return override.rstrip("/")
     base = s.hub_public_url.rstrip("/")
-    prefix = s.api_v1_prefix.rstrip("/") or "/api/v1"
+    prefix = (s.api_v1_prefix or "/api/v1").strip() or "/api/v1"
+    if not prefix.startswith("/"):
+        prefix = "/" + prefix
+    prefix = prefix.rstrip("/") or "/api/v1"
     return f"{base}{prefix}/integrations/gmail/oauth/callback"
 
 

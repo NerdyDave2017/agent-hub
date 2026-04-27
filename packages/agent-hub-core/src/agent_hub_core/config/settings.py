@@ -105,8 +105,26 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("GOOGLE_OAUTH_CLIENT_SECRET", "GMAIL_OAUTH_CLIENT_SECRET"),
     )
+    google_oauth_redirect_uri: str = Field(
+        default="",
+        validation_alias=AliasChoices("GOOGLE_OAUTH_REDIRECT_URI", "GMAIL_OAUTH_REDIRECT_URI"),
+        description="If set, used as Gmail OAuth redirect_uri (must match Google Cloud Console Authorized redirect URIs exactly). "
+        "Otherwise built from HUB_PUBLIC_URL + API_V1_PREFIX.",
+    )
     slack_oauth_client_id: str = Field(default="", validation_alias="SLACK_OAUTH_CLIENT_ID")
     slack_oauth_client_secret: str = Field(default="", validation_alias="SLACK_OAUTH_CLIENT_SECRET")
+    slack_oauth_redirect_uri: str = Field(
+        default="",
+        validation_alias="SLACK_OAUTH_REDIRECT_URI",
+        description="If set, used as Slack OAuth redirect_uri (must match Slack app Redirect URLs exactly). "
+        "Otherwise built from HUB_PUBLIC_URL + API_V1_PREFIX.",
+    )
+    slack_oauth_parent_origin: str = Field(
+        default="",
+        validation_alias="SLACK_OAUTH_PARENT_ORIGIN",
+        description="Origin sent to window.opener.postMessage after Slack OAuth when return_mode=post_message "
+        "(e.g. http://localhost:3000). Defaults to the origin of HUB_PUBLIC_URL.",
+    )
     google_webhook_secret: str = Field(
         default="",
         validation_alias=AliasChoices("GOOGLE_WEBHOOK_SECRET", "GMAIL_WEBHOOK_SECRET"),
