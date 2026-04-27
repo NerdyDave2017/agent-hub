@@ -43,27 +43,19 @@ async def login(session: DbSession, body: LoginRequest) -> TokenResponse:
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="JWT_SECRET_KEY is not configured",
         )
-    slug = body.tenant_slug.strip().lower()
-    tenant = await session.scalar(select(Tenant).where(Tenant.slug == slug))
-    if tenant is None:
-        # Same message as invalid password to avoid tenant enumeration
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid email, or password",
-        )
     email_norm = str(body.email).strip().lower()
     user = await session.scalar(
-        select(User).where(User.tenant_id == tenant.id, User.email == email_norm)
+        select(User).where(User.email == email_norm)
     )
     if user is None or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid email, or password",
+            detail="invalid email or password",
         )
     if not user.password_hash or not auth_service.verify_password(body.password, user.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="invalid email, or password",
+            detail="invalid email or password",
         )
     try:
         token, ttl = auth_service.create_access_token(

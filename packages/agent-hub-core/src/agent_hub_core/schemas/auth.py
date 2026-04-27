@@ -8,9 +8,8 @@ from pydantic import BaseModel, EmailStr, Field, model_validator
 
 
 class LoginRequest(BaseModel):
-    """Exchange email + password scoped to one tenant (by slug)."""
+    """Exchange email + password for a JWT."""
 
-    tenant_slug: str = Field(..., min_length=1, max_length=128)
     email: EmailStr
     password: str = Field(..., min_length=1, max_length=256)
 
