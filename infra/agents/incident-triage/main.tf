@@ -53,6 +53,7 @@ data "terraform_remote_state" "worker" {
 resource "aws_ecr_repository" "agent" {
   name                 = local.ecr_repo
   image_tag_mutability = "MUTABLE"
+  force_delete         = true
 
   image_scanning_configuration {
     scan_on_push = true

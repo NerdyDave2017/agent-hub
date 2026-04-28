@@ -40,6 +40,7 @@ data "terraform_remote_state" "secrets" {
 resource "aws_ecr_repository" "hub" {
   name                 = local.hub_ecr_repo
   image_tag_mutability = "MUTABLE"
+  force_delete         = true
 
   image_scanning_configuration {
     scan_on_push = true
