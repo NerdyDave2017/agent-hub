@@ -11,6 +11,10 @@
 #   → hub → worker → hub (with worker role) → rollouts
 # Destroy order (this workflow): agents → worker → hub → rds → secrets → vpc
 #
+# ECR: `force_delete = true` in Terraform only affects destroy after it is written to state.
+# Repos created before that flag existed need `terraform apply -target=aws_ecr_repository.*`
+# before `terraform destroy`, or DeleteRepository is called without `force` and fails if images exist.
+#
 # Does NOT destroy: infra/ci-oidc (would break GitHub OIDC), infra/localstack.
 name: Destroy
 
@@ -108,6 +112,10 @@ jobs:
           TF_VAR_gmail_poll_interval_seconds: ${{ vars.TF_VAR_gmail_poll_interval_seconds || '0' }}
         run: |
           terraform init -input=false
+          if terraform state show aws_ecr_repository.agent &>/dev/null; then
+            echo "::notice::ECR only apply so force_delete is in state before destroy (non-empty repos)."
+            terraform apply -auto-approve -target=aws_ecr_repository.agent
+          fi
           terraform destroy -auto-approve
 
       - name: Destroy worker
@@ -126,6 +134,10 @@ jobs:
           TF_VAR_langfuse_secret_key: ${{ secrets.TF_VAR_langfuse_secret_key }}
         run: |
           terraform init -input=false
+          if terraform state show aws_ecr_repository.worker &>/dev/null; then
+            echo "::notice::ECR only apply so force_delete is in state before destroy (non-empty repos)."
+            terraform apply -auto-approve -target=aws_ecr_repository.worker
+          fi
           terraform destroy -auto-approve
 
       - name: Destroy hub
@@ -149,6 +161,10 @@ jobs:
           TF_VAR_langfuse_host: ${{ vars.TF_VAR_langfuse_host || 'https://cloud.langfuse.com' }}
         run: |
           terraform init -input=false
+          if terraform state show aws_ecr_repository.hub &>/dev/null; then
+            echo "::notice::ECR only apply so force_delete is in state before destroy (non-empty repos)."
+            terraform apply -auto-approve -target=aws_ecr_repository.hub
+          fi
           terraform destroy -auto-approve
 
       - name: Destroy RDS
