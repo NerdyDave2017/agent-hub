@@ -4,10 +4,11 @@
 # -------------
 # - OIDC role (secret AWS_ROLE_TO_ASSUME) must allow: terraform destroy on each root, S3 state
 #   read/write, DynamoDB locks, and full resource deletion for those modules.
-# - Configure GitHub **Variables** / **Secrets** so every TF_VAR_* below resolves (same names as
-#   `.github/workflows/terraform.yml` validate job, plus real secrets for prod).
+# - Configure GitHub **Variables** / **Secrets** to match `.github/workflows/deploy.yml` for every
+#   TF_VAR_* / secret used by those roots (same names as the provision and deploy jobs).
 #
-# Apply order (for reference): vpc → secrets → rds → hub → worker → agents/incident-triage
+# Apply order (for reference): vpc → secrets → rds → hub ECR → worker ECR → agents/incident-triage
+#   → hub → worker → hub (with worker role) → rollouts
 # Destroy order (this workflow): agents → worker → hub → rds → secrets → vpc
 #
 # Does NOT destroy: infra/ci-oidc (would break GitHub OIDC), infra/localstack.
@@ -31,7 +32,7 @@ on:
         type: string
 
 concurrency:
-  group: destroy-${{ inputs.environment }}
+  group: destroy-${{ github.workflow }}-${{ inputs.environment }}
   cancel-in-progress: false
 
 permissions:
@@ -41,27 +42,6 @@ permissions:
 env:
   TF_IN_AUTOMATION: true
   TF_INPUT: "false"
-  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-  TF_VAR_environment: ${{ inputs.environment }}
-  TF_VAR_aws_region: ${{ vars.AWS_REGION || 'us-east-1' }}
-  TF_VAR_aws_account_id: ${{ vars.AWS_ACCOUNT_ID }}
-  TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}
-  TF_VAR_hub_image_uri: ${{ vars.TF_VAR_hub_image_uri }}
-  TF_VAR_worker_image_uri: ${{ vars.TF_VAR_worker_image_uri }}
-  TF_VAR_frontend_url: ${{ vars.TF_VAR_frontend_url }}
-  TF_VAR_google_pubsub_topic: ${{ vars.TF_VAR_google_pubsub_topic }}
-  TF_VAR_gcp_project_id: ${{ vars.TF_VAR_gcp_project_id }}
-  TF_VAR_google_oauth_client_id: ${{ secrets.TF_VAR_google_oauth_client_id }}
-  TF_VAR_google_oauth_client_secret: ${{ secrets.TF_VAR_google_oauth_client_secret }}
-  TF_VAR_google_webhook_secret: ${{ secrets.TF_VAR_google_webhook_secret }}
-  TF_VAR_slack_oauth_client_id_arn: ${{ vars.TF_VAR_slack_oauth_client_id_arn }}
-  TF_VAR_slack_oauth_client_secret_arn: ${{ vars.TF_VAR_slack_oauth_client_secret_arn }}
-  TF_VAR_ecr_registry: ${{ vars.TF_VAR_ecr_registry }}
-  TF_VAR_github_organization: ${{ vars.TF_VAR_github_organization }}
-  TF_VAR_github_repository: ${{ vars.TF_VAR_github_repository }}
-  TF_VAR_staging_tenant_id: ${{ vars.TF_VAR_staging_tenant_id }}
-  TF_VAR_staging_agent_id: ${{ vars.TF_VAR_staging_agent_id }}
-  TF_VAR_availability_zones: ${{ vars.TF_VAR_availability_zones || '["us-east-1a","us-east-1b"]' }}
 
 jobs:
   destroy:
@@ -69,6 +49,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Guard — confirmation phrase
+        shell: bash
         run: |
           up=$(echo "${{ inputs.environment }}" | tr '[:lower:]' '[:upper:]')
           expect="DESTROY-$up"
@@ -79,30 +60,37 @@ jobs:
           fi
 
       - name: Guard — required configuration
+        shell: bash
         run: |
-          if [ -z "${{ vars.AWS_ACCOUNT_ID }}" ]; then
-            echo "::error::Set GitHub variable AWS_ACCOUNT_ID"
-            exit 1
-          fi
-          if [ -z "${{ secrets.TF_VAR_db_password }}" ]; then
-            echo "::error::Set repository secret TF_VAR_db_password (needed for RDS destroy state)"
-            exit 1
-          fi
-          if [ -z "${{ vars.TF_VAR_hub_image_uri }}" ]; then
-            echo "::error::Set GitHub variable TF_VAR_hub_image_uri"
-            exit 1
-          fi
-          if [ -z "${{ vars.TF_VAR_worker_image_uri }}" ]; then
-            echo "::error::Set GitHub variable TF_VAR_worker_image_uri"
-            exit 1
-          fi
+          test -n "${{ secrets.TF_VAR_google_oauth_client_id }}" || { echo "::error::Missing secret TF_VAR_google_oauth_client_id"; exit 1; }
+          test -n "${{ secrets.TF_VAR_google_oauth_client_secret }}" || { echo "::error::Missing secret TF_VAR_google_oauth_client_secret"; exit 1; }
+          test -n "${{ secrets.TF_VAR_slack_oauth_client_id }}" || { echo "::error::Missing secret TF_VAR_slack_oauth_client_id"; exit 1; }
+          test -n "${{ secrets.TF_VAR_slack_oauth_client_secret }}" || { echo "::error::Missing secret TF_VAR_slack_oauth_client_secret"; exit 1; }
+          test -n "${{ secrets.TF_VAR_db_password }}" || { echo "::error::Missing secret TF_VAR_db_password"; exit 1; }
 
       - uses: actions/checkout@v4
+
+      - name: Resolve destroy metadata
+        id: meta
+        shell: bash
+        run: echo "aws_region=${{ vars.AWS_REGION || 'us-east-1' }}" >> "$GITHUB_OUTPUT"
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME }}
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ steps.meta.outputs.aws_region }}
+
+      - name: Resolve AWS account ID
+        id: account
+        shell: bash
+        run: echo "id=$(aws sts get-caller-identity --query Account --output text)" >>
+          "$GITHUB_OUTPUT"
+
+      - name: Resolve ECR registry from account and region
+        id: ecr_registry
+        shell: bash
+        run: echo "value=${{ steps.account.outputs.id }}.dkr.ecr.${{
+          steps.meta.outputs.aws_region }}.amazonaws.com" >> "$GITHUB_OUTPUT"
 
       - uses: hashicorp/setup-terraform@v3
         with:
@@ -111,36 +99,84 @@ jobs:
 
       - name: Destroy agents/incident-triage
         working-directory: infra/agents/incident-triage
+        env:
+          TF_VAR_environment: ${{ inputs.environment }}
+          TF_VAR_aws_region: ${{ steps.meta.outputs.aws_region }}
+          TF_VAR_aws_account_id: ${{ steps.account.outputs.id }}
+          TF_VAR_staging_tenant_id: ${{ vars.TF_VAR_staging_tenant_id }}
+          TF_VAR_staging_agent_id: ${{ vars.TF_VAR_staging_agent_id }}
+          TF_VAR_gmail_poll_interval_seconds: ${{ vars.TF_VAR_gmail_poll_interval_seconds || '0' }}
         run: |
           terraform init -input=false
           terraform destroy -auto-approve
 
       - name: Destroy worker
         working-directory: infra/worker
+        env:
+          TF_VAR_environment: ${{ inputs.environment }}
+          TF_VAR_aws_region: ${{ steps.meta.outputs.aws_region }}
+          TF_VAR_aws_account_id: ${{ steps.account.outputs.id }}
+          TF_VAR_worker_image_uri: ${{ steps.ecr_registry.outputs.value }}/agent-hub/worker:bootstrap
+          TF_VAR_worker_deploy_revision: ""
+          TF_VAR_gcp_project_id: ${{ vars.TF_VAR_gcp_project_id }}
+          TF_VAR_google_pubsub_topic: ${{ vars.TF_VAR_google_pubsub_topic }}
+          TF_VAR_ecr_registry: ${{ steps.ecr_registry.outputs.value }}
+          TF_VAR_langfuse_host: ${{ vars.TF_VAR_langfuse_host || 'https://cloud.langfuse.com' }}
+          TF_VAR_langfuse_public_key: ${{ secrets.TF_VAR_langfuse_public_key }}
+          TF_VAR_langfuse_secret_key: ${{ secrets.TF_VAR_langfuse_secret_key }}
         run: |
           terraform init -input=false
           terraform destroy -auto-approve
 
       - name: Destroy hub
         working-directory: infra/hub
+        env:
+          TF_VAR_environment: ${{ inputs.environment }}
+          TF_VAR_aws_region: ${{ steps.meta.outputs.aws_region }}
+          TF_VAR_aws_account_id: ${{ steps.account.outputs.id }}
+          TF_VAR_hub_image_uri: ${{ steps.ecr_registry.outputs.value }}/agent-hub/hub:bootstrap
+          TF_VAR_worker_role_arn: ""
+          TF_VAR_frontend_url: ${{ vars.TF_VAR_frontend_url }}
+          TF_VAR_hub_public_url: ${{ vars.TF_VAR_hub_public_url != '' &&
+            vars.TF_VAR_hub_public_url || 'http://127.0.0.1:8000' }}
+          TF_VAR_google_pubsub_topic: ${{ vars.TF_VAR_google_pubsub_topic }}
+          TF_VAR_gcp_project_id: ${{ vars.TF_VAR_gcp_project_id }}
+          TF_VAR_google_oauth_client_id: ${{ secrets.TF_VAR_google_oauth_client_id }}
+          TF_VAR_google_oauth_client_secret: ${{ secrets.TF_VAR_google_oauth_client_secret }}
+          TF_VAR_google_webhook_secret: ${{ secrets.TF_VAR_google_webhook_secret }}
+          TF_VAR_slack_oauth_client_id: ${{ secrets.TF_VAR_slack_oauth_client_id }}
+          TF_VAR_slack_oauth_client_secret: ${{ secrets.TF_VAR_slack_oauth_client_secret }}
+          TF_VAR_langfuse_host: ${{ vars.TF_VAR_langfuse_host || 'https://cloud.langfuse.com' }}
         run: |
           terraform init -input=false
           terraform destroy -auto-approve
 
       - name: Destroy RDS
         working-directory: infra/rds
+        env:
+          TF_VAR_environment: ${{ inputs.environment }}
+          TF_VAR_aws_region: ${{ steps.meta.outputs.aws_region }}
+          TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}
         run: |
           terraform init -input=false
           terraform destroy -auto-approve
 
       - name: Destroy secrets
         working-directory: infra/secrets
+        env:
+          TF_VAR_environment: ${{ inputs.environment }}
+          TF_VAR_aws_region: ${{ steps.meta.outputs.aws_region }}
         run: |
           terraform init -input=false
           terraform destroy -auto-approve
 
       - name: Destroy VPC
         working-directory: infra/vpc
+        env:
+          TF_VAR_environment: ${{ inputs.environment }}
+          TF_VAR_aws_region: ${{ steps.meta.outputs.aws_region }}
+          TF_VAR_availability_zones: ${{ vars.TF_VAR_availability_zones ||
+            '["us-east-1a","us-east-1b"]' }}
         run: |
           terraform init -input=false
           terraform destroy -auto-approve
