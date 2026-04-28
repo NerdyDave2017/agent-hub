@@ -33,7 +33,7 @@ resource "aws_db_instance" "postgres" {
   publicly_accessible = false
 
   backup_retention_period      = 7
-  deletion_protection          = var.environment == "production" ? true : false
+  deletion_protection          = var.deletion_protection
   skip_final_snapshot          = var.environment != "production"
   final_snapshot_identifier    = "${var.project}-${var.environment}-final-snapshot"
   performance_insights_enabled = true

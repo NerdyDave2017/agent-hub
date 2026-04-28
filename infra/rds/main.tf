@@ -24,13 +24,14 @@ data "terraform_remote_state" "secrets" {
 module "rds" {
   source = "../modules/rds"
 
-  project            = local.project
-  environment        = local.environment
-  private_subnet_ids = data.terraform_remote_state.vpc.outputs.private_subnet_ids
-  rds_sg_id          = data.terraform_remote_state.vpc.outputs.rds_sg_id
-  kms_key_arn        = data.terraform_remote_state.secrets.outputs.kms_key_arn
-  instance_class     = var.instance_class
-  db_name            = var.db_name
-  db_username        = var.db_username
-  db_password        = var.db_password
+  project             = local.project
+  environment         = local.environment
+  private_subnet_ids  = data.terraform_remote_state.vpc.outputs.private_subnet_ids
+  rds_sg_id           = data.terraform_remote_state.vpc.outputs.rds_sg_id
+  kms_key_arn         = data.terraform_remote_state.secrets.outputs.kms_key_arn
+  instance_class      = var.instance_class
+  db_name             = var.db_name
+  db_username         = var.db_username
+  db_password         = var.db_password
+  deletion_protection = coalesce(var.deletion_protection, var.environment == "production")
 }

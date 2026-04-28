@@ -31,3 +31,10 @@ variable "db_password" {
   type      = string
   sensitive = true
 }
+
+variable "deletion_protection" {
+  type        = bool
+  default     = null
+  nullable    = true
+  description = "Override RDS deletion_protection. Destroy CI sets false. Unset: true for production, false otherwise."
+}

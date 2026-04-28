@@ -15,6 +15,9 @@
 # Repos created before that flag existed need `terraform apply -target=aws_ecr_repository.*`
 # before `terraform destroy`, or DeleteRepository is called without `force` and fails if images exist.
 #
+# RDS: production uses deletion_protection. Destroy sets TF_VAR_deletion_protection=false and runs
+# `terraform apply -target=module.rds.aws_db_instance.postgres` before destroy so AWS allows delete.
+#
 # Does NOT destroy: infra/ci-oidc (would break GitHub OIDC), infra/localstack.
 name: Destroy
 
@@ -173,8 +176,13 @@ jobs:
           TF_VAR_environment: ${{ inputs.environment }}
           TF_VAR_aws_region: ${{ steps.meta.outputs.aws_region }}
           TF_VAR_db_password: ${{ secrets.TF_VAR_db_password }}
+          TF_VAR_deletion_protection: false
         run: |
           terraform init -input=false
+          if terraform state show 'module.rds.aws_db_instance.postgres' &>/dev/null; then
+            echo "::notice::RDS apply (instance only) to clear deletion_protection before destroy."
+            terraform apply -auto-approve -target=module.rds.aws_db_instance.postgres
+          fi
           terraform destroy -auto-approve
 
       - name: Destroy secrets

@@ -37,3 +37,8 @@ variable "db_password" {
   type      = string
   sensitive = true
 }
+
+variable "deletion_protection" {
+  type        = bool
+  description = "When true, RDS rejects delete until disabled. Root passes coalesce(override, production)."
+}
