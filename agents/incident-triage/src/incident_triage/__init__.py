@@ -1,4 +1,4 @@
-"""Incident triage LangGraph agent (FastAPI); see repo ``docs/incident-triage-agent-spec.md``."""
+"""Incident triage LangGraph agent (FastAPI); see ``agents/incident-triage/README.md`` and ``docs/plan.md``."""
 
 __all__ = ["__version__"]
 

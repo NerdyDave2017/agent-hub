@@ -1,6 +1,6 @@
-# Agent instructions — agent-hub (capstone)
+# Agent instructions — agent-hub
 
-Align implementation with the full project plan in **[`docs/plan.md`](docs/plan.md)**. This file is the short operational contract; extend README and `docs/architecture.md` as the repo grows.
+Align implementation with **[`plan.md`](plan.md)**. This file is the short operational contract; extend [`architecture.md`](architecture.md) and the root [`README.md`](../README.md) as the repo grows.
 
 ---
 
@@ -8,7 +8,7 @@ Align implementation with the full project plan in **[`docs/plan.md`](docs/plan.
 
 - **Hub:** FastAPI in `backend/` — client API, auth, tenants, agents registry, jobs, dashboard BFF.
 - **Worker:** Python in `worker/` — SQS consumer, Postgres updates, provisioning / KPI handlers.
-- **Agent (capstone only):** `agents/incident-triage/` — own HTTP service, Langfuse, LangGraph HITL. No second agent on the critical path.
+- **Reference agent:** `agents/incident-triage/` — own HTTP service, Langfuse, LangGraph HITL. Add more agents under `agents/` using the same pattern when needed.
 - **Order:** **Local-first** (`docker compose`: Postgres + SQS emulator + hub + worker + agent when ready). **Terraform on AWS only after** hub → SQS → worker → DB works locally.
 
 ---
@@ -51,7 +51,7 @@ Align implementation with the full project plan in **[`docs/plan.md`](docs/plan.
 
 ## Database
 
-- Postgres is a **separate** process: compose service `postgres` locally; **RDS** will live under **`infra/modules/rds`** (or a prod root calling it) once wired — hub and worker share one DB for capstone. **`DATABASE_URL`** on hub and worker. **Alembic** via explicit migrate step (Makefile/CI), not uncoordinated startup migrate on every hub replica in prod.
+- Postgres is a **separate** process: compose service `postgres` locally; **RDS** via Terraform (`infra/modules/rds` and related roots). Hub and worker share one database in typical deployments. **`DATABASE_URL`** on hub and worker. **Alembic** via explicit migrate step (Makefile/CI), not uncoordinated startup migrate on every hub replica in prod.
 
 ---
 
@@ -117,10 +117,10 @@ Apply dependent stacks **after** the root that owns shared queues / VPC / RDS wh
 
 ---
 
-## Out of scope (capstone)
+## Out of scope (v1)
 
-- Second agent or multi-agent CI matrix.
-- Full OAuth matrix for every integration — stub or one path + “phase 2” in docs.
+- Arbitrary multi-agent CI matrix before the second agent is a product requirement.
+- Full OAuth matrix for every integration — prefer one path plus documented “phase 2” gaps.
 
 ---
 
@@ -133,4 +133,4 @@ Apply dependent stacks **after** the root that owns shared queues / VPC / RDS wh
 | Agent | `agents/incident-triage/` |
 | Local | `docker-compose.yml` |
 | IaC | `infra/localstack/` (dev), `infra/hub/`, `infra/worker/`, `infra/agents/incident-triage/`, `infra/modules/*`, optional `infra/frontend/` |
-| Docs | `docs/architecture.md` |
+| Docs | `docs/plan.md`, `docs/architecture.md`, `docs/terraform-infra-instructions.md` |

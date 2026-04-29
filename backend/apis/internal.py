@@ -50,7 +50,7 @@ async def get_internal_tenant(
 
 
 def _safe_incident_for_internal_list(r: Incident) -> dict:
-    """Fields safe for agent LLM context — no PII (see ``deployment-and-dashboard-instructions``)."""
+    """Fields safe for agent LLM context — no PII (see docs/plan.md and docs/architecture.md)."""
     return {
         "id": str(r.id),
         "incident_type": r.incident_type,

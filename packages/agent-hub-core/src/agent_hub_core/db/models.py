@@ -220,7 +220,7 @@ class Integration(Base):
         JSONB
     )  # non-secret metadata (workspace ids, webhook ids); keep tokens out
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    # Gmail Pub/Sub + users.watch() (see gmail-pubsub-implementation.md)
+    # Gmail Pub/Sub + users.watch() (hub: integrations_gmail / webhooks_gmail; see docs/plan.md)
     email_address: Mapped[str | None] = mapped_column(String(320), index=True)
     last_history_id: Mapped[str | None] = mapped_column(String(64))
     watch_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

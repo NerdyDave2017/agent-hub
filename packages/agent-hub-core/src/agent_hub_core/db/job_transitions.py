@@ -1,5 +1,5 @@
 """
-Atomic ``Job`` row transitions for SQS at-least-once processing (``response.md`` Phase 6).
+Atomic ``Job`` row transitions for SQS at-least-once processing (see docs/plan.md).
 
 Use **conditional** ``UPDATE`` statements so only one worker wins the ``queued``/``pending``
 → ``running`` claim and so terminal transitions do not race with redeliveries.

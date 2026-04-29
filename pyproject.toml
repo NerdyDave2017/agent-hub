@@ -1,4 +1,4 @@
-# UV workspace root — shared kernel + hub + worker (see `response.md` Phase 1).
+# UV workspace root — shared kernel + hub + worker (see docs/plan.md).
 # Run from repo root: `uv sync` then `uv run --package agent-hub-backend ...` / `uv run --package agent-hub-worker ...`
 
 [project]

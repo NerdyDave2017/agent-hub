@@ -1,5 +1,5 @@
 """
-Shared idempotency guards for SQS at-least-once delivery (``response.md`` Phase 6).
+Shared idempotency guards for SQS at-least-once delivery (see docs/plan.md).
 
 Terminal rows are skipped here; **claim** / **complete** use conditional ``UPDATE`` helpers
 in :mod:`agent_hub_core.db.job_transitions` so only one worker wins ``queued`` → ``running``.

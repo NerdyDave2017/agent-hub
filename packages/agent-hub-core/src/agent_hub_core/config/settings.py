@@ -82,7 +82,7 @@ class Settings(BaseSettings):
         description="Bearer secret for ``/internal/*`` routes (must match agent ``HUB_SERVICE_TOKEN``).",
     )
 
-    # --- Google (Workspace) mail: Pub/Sub push + OAuth (hub — see gmail-pubsub-implementation.md) ---
+    # --- Google (Workspace) mail: Pub/Sub push + OAuth (hub) ---
     hub_public_url: str = Field(
         ...,
         min_length=1,

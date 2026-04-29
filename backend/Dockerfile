@@ -1,4 +1,4 @@
-# Hub image — installs shared kernel + FastAPI app (Phase 7, `response.md`).
+# Hub image — installs shared kernel + FastAPI app (see docs/plan.md).
 # Build from repository root: `docker build -f backend/Dockerfile .`
 
 FROM python:3.11-slim

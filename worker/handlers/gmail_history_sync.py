@@ -1,4 +1,4 @@
-"""Resolve Gmail ``history.list`` into per-message jobs (see gmail-pubsub-implementation.md)."""
+"""Resolve Gmail ``history.list`` into per-message jobs (orchestration with hub webhooks)."""
 
 from __future__ import annotations
 

@@ -1,193 +1,138 @@
-# agent-hub
+# Agent Hub
 
-Control-plane hub (`backend/`), async worker (`worker/`), and agents — see [`docs/plan.md`](docs/plan.md) and [`Agent.md`](Agent.md).
+**The place your AI agents live, scale, and stay accountable** — so your team can delegate repetitive work to assistants that plug into your tools, respect approvals, and leave a clear trail of what ran.
 
-## UV workspace (Phase 1 + 2)
+**Inside the product** — your workspace: agents, token usage, estimated cost, and trends in one view.
 
-The repo root [`pyproject.toml`](pyproject.toml) defines a **[`uv` workspace](https://docs.astral.sh/uv/concepts/projects/workspaces/)** with members:
+![Agent Hub overview dashboard: metrics, charts, and agent list](docs/screenshots/dashboard-overview.png)
 
-| Member | Role |
+---
+
+## Table of contents
+
+1. [Product preview](#product-preview)
+2. [Why Agent Hub](#why-agent-hub)
+3. [What you can do](#what-you-can-do)
+4. [Example agents](#example-agents)
+5. [How it works behind the scenes](#how-it-works-behind-the-scenes)
+6. [Architecture at a glance](#architecture-at-a-glance)
+
+---
+
+## Product preview
+
+**Marketing & first impression** — Beta positioning, value proposition, and a glimpse of the in-app overview.
+
+![Agent Hub landing page with hero, CTAs, and dashboard peek](docs/screenshots/product-landing.png)
+
+**Creating an agent** — Choose a template (incident triage, support router, metrics), then continue through name, integrations, and deploy.
+
+![Agent Hub create-agent flow: select agent type](docs/screenshots/create-agent.png)
+
+---
+
+## Why Agent Hub
+
+**The problem:** Teams are buried in repetitive work — triaging messages, drafting replies, chasing status, updating systems. Generic chat tools are hard to **govern**, **measure**, and **trust** for real business workflows. One-off scripts and scattered automations don’t scale when you need **visibility**, **retries**, and **who did what**.
+
+**What Agent Hub does:** It gives you a **single home** for AI-powered workflows: register what each assistant is allowed to do, connect the tools it needs, and run work **asynchronously** so nothing blocks your apps or your people. Sensitive steps can wait for **human approval** before anything customer-facing goes out.
+
+**Results for businesses:**
+
+- **Time back** — fewer hours on intake, triage, and follow-ups; people focus on judgment calls and relationships.
+- **Consistency** — the same playbook runs every time, with status you can check instead of “someone’s spreadsheet.”
+- **Confidence** — approvals, audit-friendly logging, and usage signals so leaders see **volume, cost, and reliability**, not a black box.
+- **Room to grow** — start with one high-impact workflow, then add more assistants as you prove value.
+
+Agent Hub is built as a **startup product**: sharp on a few workflows first, with a path to more agents and deeper analytics—not a generic “AI for everything” slide.
+
+---
+
+## What you can do
+
+- **Run multiple assistants** for different jobs (incident triage, support drafts, operations checklists, and more over time).
+- **Connect your stack** — email, ticketing, and other integrations so agents work **inside** your processes, not beside them.
+- **See what happened** — runs, failures, and cost signals so you can improve workflows and justify the investment.
+- **Stay in control** — optional human-in-the-loop for high-impact actions: propose, review, then send.
+
+---
+
+## Example agents
+
+These illustrate the **shape** of the product; shipping focus may start with one and expand.
+
+| Agent | What it helps with |
 | --- | --- |
-| [`packages/agent-hub-core`](packages/agent-hub-core/) | Shared kernel (`import agent_hub_core`) — settings, async DB, ORM, Alembic, domain, Pydantic schemas, SQS envelope + client helpers. |
-| [`backend/`](backend/) | FastAPI hub only (`main`, `apis/`, `services/`). |
-| [`worker/`](worker/) | SQS worker (`python -m worker`). |
+| **Incident triage** | Triage and summarize incoming issues, suggest next steps, and route work so on-call and support teams respond faster with fewer misses. |
+| **Customer support** | Draft replies from your knowledge and policies, flag edge cases for a human, and keep tone and facts aligned with how you serve customers. |
+| **Scheduling & follow-ups** | Propose times, reminders, and light CRM hygiene so small teams spend less time on coordination and chase. |
 
-From the **repository root**:
+The repository today includes a reference **incident triage** agent as the flagship example; the platform is designed so **more agent types** can be added without rebuilding the core.
 
-```bash
-uv sync
+---
+
+## How it works behind the scenes
+
+You don’t need to be an engineer to grasp the flow:
+
+1. **Your apps and people** talk to **Agent Hub** — the central place that knows your organization, your agents, and what’s allowed.
+2. **Agent Hub** keeps the **system of record** (who asked for what, job status, and settings). Long-running work doesn’t tie up your screen; it’s handed to a **background processor** through a **work queue**, so failures can retry safely instead of vanishing.
+3. **Each agent** is its own service: it runs the AI steps, tools, and optional “ask a human before sending” flows. That separation keeps the product **stable** as you add or change assistants.
+4. **Insights** (runs, quality, cost-style signals) flow into tooling you can use for support and product decisions — so “did the agent help?” has an answer beyond gut feel.
+
+Secrets like API keys stay in **secure storage**, not in messages flying through the queue. The database is always the **source of truth** for status; the queue is the **messenger**, not a second place you have to reconcile.
+
+---
+
+## Architecture at a glance
+
+```mermaid
+flowchart LR
+  subgraph clients [Your_team_and_apps]
+    C[Web_and_integrations]
+  end
+  subgraph control [Control_plane]
+    H[Agent_Hub]
+    DB[(Secure_database)]
+    Q[Work_queue]
+    W[Background_processor]
+  end
+  subgraph agents [Agents]
+    A1[Incident_triage]
+    A2[Customer_support]
+    A3[Scheduling_and_ops]
+  end
+  subgraph obs [Insights]
+    L[Usage_and_traces]
+  end
+  C --> H
+  H --> DB
+  H --> Q
+  W --> Q
+  W --> DB
+  H -.-> A1
+  H -.-> A2
+  H -.-> A3
+  W -.-> A1
+  W -.-> A2
+  W -.-> A3
+  H --> L
+  A1 --> L
+  A2 --> L
+  A3 --> L
 ```
 
-That creates `.venv/` and installs **agent-hub-core**, **agent-hub-backend**, and **agent-hub-worker** in editable mode. Examples:
+**Reading the diagram:** The **bold path** through Agent Hub, the database, and the queue is how work is accepted, remembered, and completed reliably. The **lighter lines** to **Agents** are where each assistant does its specialized job. **Insights** captures what ran so you can operate and improve the product with confidence.
 
-```bash
-uv run --package agent-hub-backend --directory backend uvicorn main:app --reload --host 0.0.0.0 --port 8000
+---
 
-uv run --package agent-hub-core alembic -c packages/agent-hub-core/alembic.ini upgrade head
-```
+## For developers
 
-Run the worker (no `PYTHONPATH`):
-
-```bash
-uv run python -m worker
-```
-
-`pydantic-settings` loads `./.env` first, then `backend/.env` when that file exists, so keeping secrets in `backend/.env` still works from the repo root.
-
-## Hub → worker (SQS) message contract
-
-After the hub commits a row in `jobs`, it will publish **one JSON object** per message (same shape in **local** queues and **AWS SQS**).
-
-| Field | Type (JSON) | Meaning |
-| --- | --- | --- |
-| `job_id` | string (UUID) | Primary key of `jobs.id` — worker should load/update this row. |
-| `tenant_id` | string (UUID) | Owning tenant; must match the `jobs` row. |
-| `job_type` | string | Routing key (e.g. `agent_provisioning`); same family as `Job.job_type`. |
-| `correlation_id` | string or `null` | Same as hub `X-Correlation-ID` / `jobs.correlation_id` for log correlation. |
-| `agent_id` | string (UUID) or `null` | Optional; mirrors `jobs.agent_id`. |
-| `payload` | object or `null` | Non-secret JSON only — **no** tokens, passwords, or `Authorization`-like keys. |
-
-**Rules:** the queue body is **not** a second source of truth — treat Postgres as authoritative for status and retries. **Never** put secrets in `payload` or anywhere in the message.
-
-The canonical Pydantic model (serialize with `model_dump(mode="json")`) is [`packages/agent-hub-core/src/agent_hub_core/messaging/envelope.py`](packages/agent-hub-core/src/agent_hub_core/messaging/envelope.py) (`JobQueueEnvelope`).
-
-## Local SQS (LocalStack)
-
-### SQS main queue vs DLQ (how the worker fits in)
-
-**Standard SQS queue (`agent-hub-jobs`)** — This is the **primary pipe** between hub and worker. The hub calls `SendMessage` here after it commits a job row. Your worker long-polls this queue with `ReceiveMessage`, processes the payload (often by loading `job_id` from Postgres), then calls `DeleteMessage` on success. **The worker is subscribed only to this queue URL** (`SQS_QUEUE_URL`).
-
-**Dead-letter queue (`agent-hub-jobs-dlq`)** — This is **not** where the hub sends work directly. AWS (or LocalStack) **moves** messages here automatically when a message has been **received and not deleted** more than `maxReceiveCount` times (Terraform sets `5` on the main queue’s redrive policy). Typical reasons: your handler keeps throwing, the worker crashes before `DeleteMessage`, or the message is malformed and you `ChangeMessageVisibility` / let it time out until the cap is hit.
-
-So: **hub → main queue → worker** is the happy path. **Main queue → DLQ** is AWS’s safety net for “this message is poison or the code is broken,” so one bad job does not block the queue forever. In ops you inspect the DLQ (replay, fix data, discard); the normal worker process still only **polls the main queue** unless you deliberately add a second consumer for DLQ inspection.
-
-**AWS worker (ECS + EventBridge)** — Production worker stack lives in [`infra/worker/`](infra/worker/) (`modules/ecs-worker` + scheduled rules in `main.tf`). See [`docs/terraform-infra-instructions.md`](docs/terraform-infra-instructions.md), [`infra/worker/README.md`](infra/worker/README.md), and [`docs/deployment-and-dashboard-instructions.md`](docs/deployment-and-dashboard-instructions.md) §7.3.
-
-**Terraform + Makefile (source of truth)** — Queues (`modules/sqs`), secrets (`modules/secrets`), and IAM (App Runner trust for hub, ECS for worker/agent) are composed in [`infra/localstack/`](infra/localstack/). Full layout: [`infra/README.md`](infra/README.md). From the repo root:
-
-```bash
-make local-up          # postgres + localstack
-make local-provision   # wait for LocalStack → terraform apply → writes localstack.auto.env
-```
-
-`localstack.auto.env` holds `SQS_QUEUE_URL` / `SQS_DLQ_URL` from Terraform (LocalStack may use a different host/path than the legacy defaults). Use it with Compose:
-
-```bash
-docker compose --env-file localstack.auto.env up -d hub worker
-# or: make local-apps-up
-```
-
-| Queue | Purpose |
-| --- | --- |
-| `agent-hub-jobs` | Main work queue — hub `SendMessage`, worker `ReceiveMessage`. |
-| `agent-hub-jobs-dlq` | Dead-letter queue — `RedrivePolicy` on the main queue (`maxReceiveCount: 5`). |
-
-**Confirm queues**
-
-```bash
-docker compose exec localstack awslocal sqs list-queues
-```
-
-**Queue URLs** — Prefer values from `localstack.auto.env` or:
-
-```bash
-cd infra/localstack && terraform output -raw sqs_queue_url
-```
-
-**Environment variables (hub / worker, local)**
-
-| Variable | Local example | Production |
-| --- | --- | --- |
-| `AWS_ENDPOINT_URL` | `http://localhost:4566` (host) or `http://localstack:4566` (another compose service) | **Unset** — real AWS endpoint |
-| `AWS_REGION` | `us-east-1` | Your region |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | `test` / `test` (LocalStack; **required** there because boto3 has no IAM role on your laptop) | **Omit** on ECS so the task role is used |
-| `SQS_QUEUE_URL` | Full URL for `agent-hub-jobs` (see above) | Real SQS queue URL |
-| `SQS_DLQ_URL` | DLQ URL (optional on hub; useful for ops scripts) | Real DLQ URL |
-
-These names match [`packages/agent-hub-core/src/agent_hub_core/config/settings.py`](packages/agent-hub-core/src/agent_hub_core/config/settings.py) (`pydantic-settings`). The hub will use the same boto3 client shape locally and in AWS — only `AWS_ENDPOINT_URL` and credentials differ, per [`docs/plan.md`](docs/plan.md).
-
-**Hub enqueue:** when `SQS_QUEUE_URL` is set, `POST /api/v1/tenants/{tenant_id}/jobs` commits the `jobs` row, then calls `SendMessage` with a **`JobQueueEnvelope`** ([`messaging/envelope.py`](packages/agent-hub-core/src/agent_hub_core/messaging/envelope.py)). On success the row becomes **`queued`**; if SQS is misconfigured the row stays **`pending`** and the hub logs a warning with `job_id` / `correlation_id`. If `SQS_QUEUE_URL` is **unset**, rows stay **`pending`** (useful while you only exercise the REST + DB layer).
-
-**Init hooks** — [`scripts/localstack-init/ready.d/`](scripts/localstack-init/ready.d/) still mounts into the container; queue creation is **not** done there anymore (Terraform owns SQS). Keep scripts **executable** if you add new `ready.d` steps (`chmod +x scripts/localstack-init/ready.d/*.sh`).
-
-## Smoke test: Postgres + hub + LocalStack SQS
-
-Goal: prove **migrations**, **hub → DB**, and **hub → SQS** in one pass (no worker required for the queue part).
-
-**1. Start Postgres + LocalStack and provision AWS emulators**
-
-```bash
-make local-up
-make local-provision
-```
-
-**2. Configure the hub (`backend/.env` or your shell)**
-
-Use a DB URL that matches compose (from your laptop, not from inside a container). Queue URLs: copy from `make local-print-env` or `cat localstack.auto.env`.
-
-```bash
-export DATABASE_URL='postgresql+asyncpg://postgres:postgres@127.0.0.1:5432/postgres'
-export AWS_REGION=us-east-1
-export AWS_ENDPOINT_URL=http://127.0.0.1:4566
-export AWS_ACCESS_KEY_ID=test
-export AWS_SECRET_ACCESS_KEY=test
-export SQS_QUEUE_URL='<from localstack.auto.env or terraform output -raw sqs_queue_url>'
-```
-
-**3. Run migrations**
-
-From the **repository root** (with the workspace `.venv`):
-
-```bash
-uv run --package agent-hub-core alembic -c packages/agent-hub-core/alembic.ini upgrade head
-```
-
-**4. Run the API**
-
-From the **repository root**:
-
-```bash
-uv run --package agent-hub-backend --directory backend uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-**5. Exercise the API**
-
-Create a tenant, then an agent (that path enqueues **`agent_provisioning`**):
-
-```bash
-BASE=http://127.0.0.1:8000/api/v1
-TENANT=$(curl -sS -X POST "$BASE/tenants" -H 'Content-Type: application/json' \
-  -d '{"name":"Demo Org","slug":"demo-org"}' | jq -r .id)
-curl -sS -X POST "$BASE/tenants/$TENANT/agents" -H 'Content-Type: application/json' \
-  -H "X-Correlation-ID: smoke-test-1" \
-  -d '{"agent_type":"incident_triage","name":"Demo agent"}' | jq .
-```
-
-**6. Verify Postgres**
-
-Connect with `psql` or a GUI: you should see a row in **`jobs`** with `job_type = agent_provisioning`, `status` **`queued`** if SQS send succeeded, or **`pending`** if `SQS_QUEUE_URL` / LocalStack was wrong (check hub logs).
-
-**7. Verify SQS (optional)**
-
-Peek one message (then it becomes visible again after timeout if you do not delete):
-
-```bash
-docker compose exec localstack awslocal sqs receive-message \
-  --queue-url "$SQS_QUEUE_URL" --max-number-of-messages 1
-```
-
-You should see a JSON body matching **`JobQueueEnvelope`** (see [`messaging/envelope.py`](packages/agent-hub-core/src/agent_hub_core/messaging/envelope.py)) (`job_id`, `tenant_id`, `correlation_id`, etc.).
-
-## Worker (slice 1 — SQS + envelope + DB ping)
-
-The worker lives under [`worker/`](worker/): **orchestration** in [`worker/main.py`](worker/main.py), **structlog → JSON** via [`agent_hub_core.observability.logging`](packages/agent-hub-core/src/agent_hub_core/observability/logging.py) (UTC `timestamp`, `pathname` / `filename` / `lineno` / `func_name`, default `service`), **SQS receive/delete** in [`worker/sqs_transport/sqs_receive.py`](worker/sqs_transport/sqs_receive.py), and **job dispatch** under [`worker/handlers/`](worker/handlers/) (`registry.py` + per-`JobType` handlers; AWS adapters scaffolded in [`worker/handlers/aws/`](worker/handlers/aws/)).
-
-**Behaviour:** DB ping on startup; long-poll SQS; validate **`JobQueueEnvelope`**; load **`jobs`** row; run the registered handler (stub transitions for now); **`DeleteMessage`** only after the handler completes without raising (malformed envelope, missing job, or handler errors leave the message for retry / DLQ).
-
-From the **repository root** (with Postgres + LocalStack already up and env vars set like the hub smoke test):
-
-```bash
-uv run python -m worker
-```
-
-Use the same `DATABASE_URL`, `SQS_QUEUE_URL`, and AWS variables as the hub. Stop the process with Ctrl+C; the pool is disposed in a `finally` block.
+- **[docs/explanatory-brief-for-llms.md](docs/explanatory-brief-for-llms.md)** — Product + technical orientation, stack, and how to use the repo.
+- **[docs/architecture.md](docs/architecture.md)** — Components, `agent-hub-core`, Terraform map, observability, security boundaries.
+- **[docs/design-decisions.md](docs/design-decisions.md)** — Why we chose each technology, provisioning model, tradeoffs, problems solved.
+- **[docs/data-flow.md](docs/data-flow.md)** — Sequence diagrams for sign-up, dashboard, create agent, worker provisioning, integrations.
+- **[docs/plan.md](docs/plan.md)** — Phased delivery, dependency checklist, out-of-scope notes.
+- **[docs/Agent.md](docs/Agent.md)** — Conventions for contributors and coding agents.
+- **[docs/terraform-infra-instructions.md](docs/terraform-infra-instructions.md)** — AWS Terraform bootstrap and apply order.
+- **Local orchestration** — [`Makefile`](Makefile) (`make help`, `make local-up`, `make local-provision`). Infra index: [`infra/README.md`](infra/README.md).

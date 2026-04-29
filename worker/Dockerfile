@@ -1,4 +1,4 @@
-# Worker image — shared kernel + SQS consumer only; **no** Alembic (`response.md` Phase 7).
+# Worker image — shared kernel + SQS consumer only; **no** Alembic (migrations run via agent-hub-core / CI).
 # Build from repository root: `docker build -f worker/Dockerfile .`
 
 FROM python:3.11-slim

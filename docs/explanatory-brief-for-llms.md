@@ -1,6 +1,6 @@
 # Agent Hub — explanatory brief for LLMs
 
-This document orients language models and new contributors to **what Agent Hub is**, **which problems it solves**, **how the system is shaped**, and **why key technical choices were made**. It complements the executable plan in [`plan.md`](plan.md), the contributor contract in [`Agent.md`](Agent.md), and operational detail in the root [`README.md`](../README.md).
+This document orients language models and new contributors to **what Agent Hub is**, **which problems it solves**, **how the system is shaped**, and **why key technical choices were made**. It complements the executable plan in [`plan.md`](plan.md), the contributor contract in [`Agent.md`](Agent.md), **system diagrams** in [`architecture.md`](architecture.md), **user-facing data flows** in [`data-flow.md`](data-flow.md), **rationale and tradeoffs** in [`design-decisions.md`](design-decisions.md), and operational detail in [`infra/README.md`](../infra/README.md) and [`terraform-infra-instructions.md`](terraform-infra-instructions.md). The root [`README.md`](../README.md) is **product-oriented** for visitors; engineers should use the links above for runbooks and stack detail.
 
 ---
 
@@ -144,7 +144,7 @@ From [`plan.md`](plan.md): multi-region active-active; arbitrary tenant-supplied
 ## 8. How an LLM should use this repo
 
 - **Implement against** [`docs/plan.md`](plan.md) and [`docs/Agent.md`](Agent.md) for scope, ordering (**local-first before Terraform**), and logging/secrets rules.
-- **Run and verify** using the root [`README.md`](../README.md) (`make local-up`, `make local-provision`, smoke curls, worker `uv run python -m worker`).
+- **Run and verify** using [`infra/README.md`](../infra/README.md) and [`terraform-infra-instructions.md`](terraform-infra-instructions.md) (`make local-up`, `make local-provision`, worker `uv run python -m worker`, etc.).
 - **Prefer extending** `agent-hub-core` for cross-cutting types and `backend/apis` / `worker/handlers` for behavior rather than parallel conventions.
 - **When editing infra**, respect per-root ownership and documented apply order; do not collapse unrelated services into one Terraform root without an explicit plan change.
 
